@@ -1,0 +1,58 @@
+"""Second-model check: is each claim actually supported by the evidence it cites?
+
+Numeric grounding catches invented figures; it cannot catch a claim whose numbers are real but whose conclusion is
+reversed ("revenue growth outpacing profit" when profit grew faster). One batched call to a different, cheap model
+judges each claim against only its own cited evidence.
+"""
+from ..llm import LLMUnavailable, chat_json
+
+SYSTEM = """You audit claims in an equity research memo. For each claim you get ONLY the evidence it cites.
+A claim is unsupported if the evidence contradicts it (including reversed comparisons, wrong direction of change,
+wrong period, or a figure attached to the wrong metric), or if the claim asserts something the evidence does not
+contain. Explanations and implications are claims too ("indicating…", "suggesting…", "due to…", "showing…"): they
+are unsupported unless the evidence states them or they follow necessarily from the cited numbers — check the logic
+(e.g. revenue growing faster than profit implies margin compression, not recovery; a target cut that the evidence
+attributes to a reclassification is not evidence of weaker demand). Paraphrase and plain summarising are fine.
+Do not use outside knowledge.
+Return JSON: {"checks":[{"id":"<claim id>","supported":true|false,"issue":"if false: max 20 words on what is wrong"}]}"""
+
+
+def _evidence_text(e: dict) -> str:
+    t = e.get("type")
+    if t == "signal":
+        return f"Computed signal: {e.get('text')}"
+    if t == "fact" or "value" in e:
+        return f"Reported figure: {e.get('label')} = {e.get('value')} {e.get('unit')} ({e.get('period')})"
+    if t == "guidance" or "statement" in e:
+        return f"Management said ({e.get('call')} call): \"{e.get('statement')}\""
+    if t == "analyst":
+        return f"An analyst asked: \"{e.get('quote')}\""
+    if t == "ledger":
+        return (f"Promise-ledger row: {e.get('subject')} — verdict {e.get('verdict')}. Promised: {e.get('promise')}. "
+                f"Assessment: {e.get('why')}")
+    return str(e)
+
+
+def claims_for(thesis: dict, ledger: dict) -> list[dict]:
+    out = []
+    for side in ("bull", "bear"):
+        for i, p in enumerate(thesis.get(side, [])):
+            out.append({"id": f"{side}{i + 1}", "claim": p["point"], "evidence": [_evidence_text(e) for e in p["evidence"]]})
+    for i, r in enumerate(ledger.get("rows", [])):
+        if r["verdict"] == "unverifiable":
+            continue
+        ev = [_evidence_text({"type": "guidance", **g}) for g in r["evidence"]] + [_evidence_text({"type": "fact", **f}) for f in r["facts"]]
+        out.append({"id": f"L{i + 1}", "claim": f"Verdict '{r['verdict']}' on '{r['subject']}'. {r['delivered']} {r['why']}", "evidence": ev})
+    return out
+
+
+def check(claims: list[dict]) -> dict[str, dict]:
+    """{claim id: {"supported": bool, "issue": str}} — empty if no verifier model is available."""
+    if not claims:
+        return {}
+    body = "\n\n".join(f"CLAIM {c['id']}: {c['claim']}\nEVIDENCE:\n- " + "\n- ".join(c["evidence"] or ["(none)"]) for c in claims)
+    try:
+        out = chat_json("verify", "verify", SYSTEM, body, max_tokens=3000)
+    except LLMUnavailable:
+        return {}
+    return {c.get("id"): {"supported": bool(c.get("supported")), "issue": c.get("issue") or ""} for c in out.get("checks", [])}

@@ -31,7 +31,8 @@ PROVIDERS = {
 # flash-latest timed out on every call.
 TIERS = {
     # short inputs, high volume: classification fallback, one-liners, profile extraction
-    "fast": [("groq", "llama-3.1-8b-instant"), ("gemini", "gemini-3.5-flash-lite"), ("gemini", "gemini-3.1-flash-lite"),
+    # Groq (verified 2026-11-09): Llama models retired; gpt-oss-120b/20b and qwen3.8-27b at 1,000 req/day, 8k tokens/min.
+    "fast": [("groq", "openai/gpt-oss-20b"), ("gemini", "gemini-3.5-flash-lite"), ("gemini", "gemini-3.1-flash-lite"),
              ("gemini", "gemini-flash-lite-latest"), ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
              ("openai", "gpt-4o-mini"), ("ollama", "gemma3:4b")],
     # whole documents (~20k tokens): transcript guidance extraction
@@ -39,13 +40,17 @@ TIERS = {
              ("openai", "gpt-4o-mini"), ("ollama", "gemma3:4b")],
     # reasoning over extracted JSON: promise-ledger verdicts, bull/bear
     "reason": [("gemini", "gemini-3.5-flash"), ("groq", "openai/gpt-oss-120b"), ("gemini", "gemini-3-flash-preview"),
-               ("groq", "llama-3.3-70b-versatile"), ("openai", "gpt-4o-mini"),
+               ("groq", "qwen/qwen3.8-27b"), ("openai", "gpt-4o-mini"),
                ("gemini", "gemini-3.5-flash-lite"),  # last resort: weaker, but the validators still apply
                ("ollama", "gemma3:4b")],
 }
-EFFORT = {"fast": "low", "long": "low", "reason": "medium"}
-TIMEOUT = {"fast": 40, "long": 120, "reason": 150}
+# second-model check of claims against their cited evidence: Groq first (large daily quota, different from the writer)
+TIERS["verify"] = [("groq", "openai/gpt-oss-120b"), ("gemini", "gemini-3-flash-preview"), ("groq", "qwen/qwen3.8-27b"), ("groq", "openai/gpt-oss-20b"),
+                   ("gemini", "gemini-3.5-flash-lite"), ("openai", "gpt-4o-mini"), ("ollama", "gemma3:4b")]
+EFFORT = {"fast": "low", "long": "low", "reason": "medium", "verify": "low"}
+TIMEOUT = {"fast": 40, "long": 120, "reason": 150, "verify": 90}
 MIN_GAP = {"gemini": 4.5, "groq": 2.0}  # seconds between calls to one model — stays under per-minute limits
+TPM_CAP = {"groq": 8000}  # tokens/minute on the free tier; prompt + completion of one call must fit inside it
 
 # Unavailable models are benched: 404 (retired) for a day, quota 429s until the server's retryDelay, timeouts 15 min.
 _benched: dict[str, float] = {}
@@ -126,22 +131,25 @@ def _cache_key(model: str, system: str, user: str) -> str:
 
 def chat_json(task: str, tier: str, system: str, user: str, max_tokens: int = 2000, temperature: float = 0.1,
               max_wait: float = 90):
-    """Return parsed JSON from the first working candidate of `tier`.
+    """Return parsed JSON from the best candidate of `tier` that can answer now.
 
-    Order: any cached answer from any candidate (free) → live candidates in tier order. If every candidate is benched
-    only briefly (per-minute limits), wait up to `max_wait` seconds for the first to free up instead of failing.
+    Candidates are walked in quality order: a model's cached answer is used if it has one (free); a benched model is
+    skipped; otherwise the model is called. So a weaker model's cached answer is only reused while every stronger model
+    is unavailable — it never shadows a better live model. If every candidate is benched only briefly (per-minute
+    limits), wait up to `max_wait` seconds instead of failing.
     """
     cands = _candidates(tier)
-    for provider, model, _ in cands:  # a benched model's cached answer is still a valid answer
-        if hit := kv_get(_cache_key(model, system, user)):  # empty answers are never cached
-            _log(task=task, provider=provider, model=model, cache_hit=True)
-            return hit
     errors: list[str] = []
     deadline = time.time() + max_wait
     while True:
         for provider, model, key in cands:
+            if hit := kv_get(_cache_key(model, system, user)):  # empty answers are never cached
+                _log(task=task, provider=provider, model=model, cache_hit=True)
+                return hit
             if _is_benched(f"{provider}:{model}"):
                 continue
+            if provider in TPM_CAP and (len(system) + len(user)) / 3.2 + 800 > TPM_CAP[provider]:
+                continue  # prompt can't fit the provider's per-minute token window at all
             out = _call(task, tier, provider, model, key, system, user, max_tokens, temperature, errors)
             if out is not None:
                 return out
@@ -164,6 +172,9 @@ def _call(task, tier, provider, model, key, system, user, max_tokens, temperatur
         body["response_format"] = {"type": "json_object"}
     if (provider == "groq" and "gpt-oss" in model) or (provider == "gemini" and "-3" in model):
         body["reasoning_effort"] = EFFORT[tier]
+    if provider in TPM_CAP:  # the requested completion counts against the per-minute window too
+        room = int(TPM_CAP[provider] - (len(system) + len(content)) / 3.0 - 200)
+        body["max_tokens"] = max(400, min(max_tokens, room))
     for attempt in range(3):  # retries on the same model for overload (503) or malformed output
         _pace(provider, name)
         t0 = time.time()
@@ -173,9 +184,11 @@ def _call(task, tier, provider, model, key, system, user, max_tokens, temperatur
             if r.status_code == 404:
                 _bench(name, 86400)
             elif r.status_code == 429:
-                # quotas say when they reset ("retryDelay": "65477s" daily, a few seconds per-minute); honour it
+                # quotas say when they reset — Gemini: "retryDelay": "65477s"; Groq: "try again in 7.5s" / "in 2m3s"
                 m = re.search(r'"retryDelay":\s*"(\d+)', r.text)
-                _bench(name, min(int(m.group(1)) + 1, 86400) if m else 60)
+                g = re.search(r"try again in (?:(\d+)h)?(?:(\d+)m)?([\d.]+)s", r.text)
+                wait = int(m.group(1)) if m else (int(g.group(1) or 0) * 3600 + int(g.group(2) or 0) * 60 + float(g.group(3))) if g else 60
+                _bench(name, min(wait + 1, 86400))
             if r.status_code != 200:
                 raise RuntimeError(f"HTTP {r.status_code}: {r.text[:160]}")
             data = r.json()

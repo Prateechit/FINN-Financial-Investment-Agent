@@ -147,3 +147,25 @@ def test_readable_ids_and_double_negative():
 def test_ledger_summary_keeps_rupee_numbers_parseable():
     c = ledger.compact({"rows": [{"subject": "Telecom", "verdict": "goalposts_moved", "why": "cut to ₹6,700-7,000 crore"}]})
     assert ungrounded("lowered to ₹6,700-7,000 crore", c) == []
+
+
+def test_analyst_questions_are_not_guidance():
+    from finn.pull.transcripts import _INTRODUCED, _person, speaker_at
+    full = ("\nModerator: \nThe next question is from the line of Nitin Kaushik with Afin Capital. \nNitin Kaushik: \n"
+            "Sir, you reiterated that the company is targeting over INR1 lakh crore revenue. \nAtul Lall: \n"
+            "Yes, we will reach it in 3 to 4 years. \nNitin Kaushik: \nThanks. \nAtul Lall: \nWelcome. \n"
+            "Home Appliances: \nWe expect 20% growth in washing machines next year.\n")
+    analysts = frozenset(_person(n) for n in _INTRODUCED.findall(full))
+    assert speaker_at(full, "you reiterated that the company is targeting over INR1 lakh crore", analysts) == "Nitin Kaushik"
+    assert speaker_at(full, "we will reach it in 3 to 4 years", analysts) == "Atul Lall"
+    assert speaker_at(full, "We expect 20% growth in washing machines next year", analysts) == "Atul Lall"  # heading skipped
+
+
+def test_missed_requires_an_ended_horizon():
+    g = {"G1": {"id": "G1", "horizon": "next 1, 2, 3 years", "call": "Q4 FY26"}, "G2": {"id": "G2", "horizon": "FY26", "call": "Q2 FY26"}}
+    open_row = {"verdict": "missed", "guidance_ids": ["G1"], "why": ""}
+    ledger._horizon_guard(open_row, g, "Sep 2026")
+    assert open_row["verdict"] == "at_risk"
+    ended_row = {"verdict": "missed", "guidance_ids": ["G2"], "why": ""}
+    ledger._horizon_guard(ended_row, g, "Sep 2026")
+    assert ended_row["verdict"] == "missed"  # FY26 ended before the Sep 2026 (FY27) quarter

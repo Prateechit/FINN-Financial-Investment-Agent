@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from ..db import LLMCall, kv_get, kv_set, now, session
 from ..llm import LLMUnavailable, available
 from ..push import results
-from . import financials, ledger, thesis, transcripts
+from . import financials, ledger, thesis, transcripts, verify
 
 _running: set[str] = set()
 _lock = threading.Lock()
@@ -64,6 +64,32 @@ def _add_results_facts(sym: str, fin: dict) -> None:
     for m in card["margins"]:
         add(f"X.{m['label']}.{q}", f"{m['label']} (exchange filing)", m["cur"], "%", q)
         add(f"X.{m['label']}.{card['yoy_label']}", f"{m['label']} (exchange filing)", m["yoy"], "%", card["yoy_label"])
+
+
+def _verify(fin: dict, calls: list[dict], secs: dict) -> None:
+    """Second-model check. Unsupported thesis points trigger one rewrite; anything still unsupported is flagged."""
+    res = verify.check(verify.claims_for(secs["thesis"], secs["ledger"]))
+    if not res:
+        secs["verification"] = {"status": "skipped"}
+        return
+    bad = [f"\"{p['point']}\" — {res[f'{side}{i + 1}']['issue']}" for side in ("bull", "bear")
+           for i, p in enumerate(secs["thesis"][side]) if not res.get(f"{side}{i + 1}", {"supported": True})["supported"]]
+    rewritten = False
+    if bad:
+        secs["thesis"] = thesis.build(fin, calls, secs["ledger"], feedback=bad)
+        res.update({k: v for k, v in verify.check(verify.claims_for(secs["thesis"], {"rows": []})).items()})
+        rewritten = True
+    for side in ("bull", "bear"):
+        for i, p in enumerate(secs["thesis"][side]):
+            r = res.get(f"{side}{i + 1}", {"supported": True})
+            p["verified"], p["issue"] = r["supported"], r["issue"] or None
+    for i, row in enumerate(secs["ledger"].get("rows", [])):
+        r = res.get(f"L{i + 1}")
+        if r:
+            row["verified"], row["issue"] = r["supported"], r["issue"] or None
+    flagged = sum(1 for p in secs["thesis"]["bull"] + secs["thesis"]["bear"] if p.get("verified") is False) +         sum(1 for r in secs["ledger"].get("rows", []) if r.get("verified") is False)
+    secs["verification"] = {"status": "done", "checked": len(res), "flagged": flagged, "rewrote_thesis": rewritten,
+                            "initially_unsupported": bad}
 
 
 def build(sym: str, force: bool = False) -> dict:
@@ -118,6 +144,8 @@ def build(sym: str, force: bool = False) -> dict:
         secs["ledger"] = ledger.build(calls, fin["facts"], latest_q)
         save(stage="Writing the bull and bear case")
         secs["thesis"] = thesis.build(fin, calls, secs["ledger"])
+        save(stage="Cross-checking every claim against its evidence")
+        _verify(fin, calls, secs)
         save(status="done", stage="")
     except LLMUnavailable as e:
         save(status="partial", stage="", errors=state["errors"] + [f"AI unavailable: {e}"[:300]])

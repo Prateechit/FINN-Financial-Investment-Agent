@@ -30,7 +30,7 @@ You set the alert thresholds. Moves are reported in both % and σ (standard devi
 | Problem | What FINN does |
 |---|---|
 | LLMs invent numbers | **The model never produces a figure.** Results come from NSE XBRL (exact rupee values), and multi-year data from standardised statements, computed in code. Any number in model-written prose must exist in the evidence the model was given, otherwise it is flagged. |
-| Quotes get paraphrased | Every guidance quote is matched **verbatim** against the transcript text, and the page number is recorded. Unmatched or non-forward-looking statements are discarded, and the count is shown. |
+| Quotes get paraphrased — or come from the wrong speaker | Every guidance quote is matched **verbatim** against the transcript text, and the page number is recorded. The speaker turn is located too: a quote spoken by the moderator or by an analyst the moderator introduced is not a management promise (10 of 38 HDFC Bank "guidance" quotes were analysts' words). Discarded statements are counted and shown. |
 | Confident verdicts with no evidence | A delivered / missed / on-track verdict needs a reported figure or a later management statement. Otherwise it is downgraded to "can't verify", and the downgrade is shown. |
 | One data source can be wrong or late | Results are cross-checked: XBRL vs screener and PBT − tax ≈ PAT. **19/19 holdings pass the arithmetic check; 18/19 agree across two sources.** The exception (HDFC Bank: screener uses a different PAT aggregation) is shown as an amber flag, not hidden. |
 | "CFO resigned" says nothing | SEBI requires a brief profile of any newly appointed director or key manager *inside the filing*. FINN extracts it and links the page, so the bio comes from a primary source, not scraped LinkedIn. |
@@ -50,9 +50,12 @@ BSE-hosted PDFs (filings, transcripts) ─────────────�
 | Tier | Used for | Candidates (first available wins, fallback on error or rate limit) |
 |---|---|---|
 | rules | most classification and scoring | — (free) |
-| `fast` | ambiguous classification, one-liners, management-profile extraction | Groq Llama 3.1 8B → Gemini Flash-Lite → … → local Ollama |
-| `long` | one pass per transcript (~16k tokens) → quote-verified guidance JSON | Gemini 2.5 Flash → Flash-Lite → … |
-| `reason` | Promise Ledger verdicts and bull/bear, over *extracted JSON*, not raw documents | Gemini 2.5 Flash → Groq gpt-oss-120b → … |
+| `fast` | ambiguous classification, one-liners, management-profile extraction | Groq gpt-oss-20b → Gemini 3.5/3.1 Flash-Lite → … |
+| `long` | one pass per transcript (~16k tokens) → quote-verified guidance JSON | Gemini 3.5 Flash → 3 Flash (preview) → 3.5 Flash-Lite |
+| `reason` | Promise Ledger verdicts and bull/bear, over *extracted JSON*, not raw documents | Gemini 3.5 Flash → Groq gpt-oss-120b → Gemini 3 Flash → Groq Qwen3.8-27B → Flash-Lite |
+| `verify` | a second model checks every bull/bear point and ledger verdict against **only its cited evidence** (catches reversed comparisons and unsupported "indicating…" add-ons); unsupported thesis points trigger one rewrite, the rest are flagged | Groq gpt-oss-120b → Gemini 3 Flash → Groq Qwen / gpt-oss-20b |
+
+Free tiers shape the router: Gemini allows ~20 requests/day and ~15/minute **per model**; Groq 1,000/day but 8k tokens/minute. So the router walks models in quality order, uses a model's cached answer if it has one, skips benched models (until the provider's own `retryDelay`, shared across processes), paces calls per model, skips prompts that cannot fit a provider's token window, and waits out brief per-minute limits instead of failing.
 
 Everything is cached by content hash: PDFs, page text, XBRL facts and LLM responses (empty answers are never cached). Each memo shows its own model calls, tokens and cache hits.
 

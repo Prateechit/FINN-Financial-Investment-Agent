@@ -9,6 +9,9 @@ SYSTEM = """You write the tightest possible bull and bear case on a listed compa
 You may use ONLY the EVIDENCE provided (computed signals S*, promise-ledger rows L*, management guidance G*,
 analyst questions A*, facts by id). No outside knowledge, no news, no valuation opinions beyond the facts given.
 Quote numbers exactly as given; do not compute new ones.
+Do not append causes or implications the evidence does not state ("indicating weaker demand", "suggesting a
+recovery"). An interpretation is allowed only if it follows necessarily from the cited numbers — e.g. revenue growing
+faster than profit means margins are compressing; it never means they are recovering.
 Analyst questions (A*) are claims, not facts — attribute them ("analysts pressed on …"). Weigh the most recent
 quarter's profit and margin signals heavily: a bull case that ignores a sharp profit fall is not credible.
 
@@ -19,7 +22,7 @@ Return JSON:
 Exactly 3 bull and 3 bear points; every point must cite at least one ref."""
 
 
-def build(fin: dict, calls: list[dict], ledger: dict) -> dict:
+def build(fin: dict, calls: list[dict], ledger: dict, feedback: list[str] | None = None) -> dict:
     sig = {f"S{i + 1}": s for i, s in enumerate(fin["signals"])}
     focus = {f"A{i + 1}": f for i, f in enumerate([f for c in calls for f in c.get("analyst_focus", [])][:8])}
     latest = next((c for c in calls if c.get("guidance")), None)
@@ -32,11 +35,14 @@ def build(fin: dict, calls: list[dict], ledger: dict) -> dict:
     ev += ["ANALYST QUESTIONS:"] + [f"{k}: {f['topic']} — \"{f['quote']}\"" for k, f in focus.items()]
     ev += ["FACTS:"] + [f"{k} = {fmt(v['value'], v['unit'])} ({v['label']}, {v['period']})" for k, v in key_facts.items()]
     evidence = "\n".join(ev)
-    out = chat_json("thesis", "reason", SYSTEM, evidence, max_tokens=5000)
+    prompt = evidence if not feedback else (evidence + "\n\nA reviewer checked your previous draft against the evidence and "
+                                            "found these claims unsupported. Do not repeat them:\n- " + "\n- ".join(feedback))
+    out = chat_json("thesis" if not feedback else "thesis_revise", "reason", SYSTEM, prompt, max_tokens=12000)
     valid = set(sig) | set(focus) | set(guid) | set(led) | set(key_facts)
     lookup = {**{k: {"type": "signal", **v} for k, v in sig.items()}, **{k: {"type": "analyst", **v} for k, v in focus.items()},
               **{k: {"type": "guidance", **v} for k, v in guid.items()},
-              **{k: {"type": "ledger", "subject": v["subject"], "verdict": v["verdict"]} for k, v in led.items()},
+              **{k: {"type": "ledger", "subject": v["subject"], "verdict": v["verdict"], "promise": v.get("promise"),
+                     "why": v.get("why")} for k, v in led.items()},
               **{k: {"type": "fact", **v} for k, v in key_facts.items()}}
 
     def clean(p):
@@ -52,6 +58,11 @@ def build(fin: dict, calls: list[dict], ledger: dict) -> dict:
             refs += [x.strip() for x in group.split(",") if x.strip() in valid and x.strip() not in refs]
         point = re.sub(r"\s*\((?:[SLGA]\d+(?:\.\d+)?|calc\.[^,()]+|X\.[^,()]+)(?:,\s*(?:[SLGA]\d+(?:\.\d+)?|calc\.[^,()]+|X\.[^,()]+))*\)", "", point)
         point = readable_ids(re.sub(r"\s*\(?refs?:?\s*\[[^\]]*\]\)?", "", point).strip(), fin["facts"])
+        # A year-on-year comparison needs both sides: citing "X.PAT margin.Q2 FY27" also cites the same metric a year earlier.
+        for r in list(refs):
+            if r.startswith("X."):
+                base, period = r.rsplit(".", 1)
+                refs += [k for k in key_facts if k.rsplit(".", 1)[0] == base and k != r and k not in refs]
         # Something only an analyst said is a claim; if the sentence doesn't attribute it, attribute it.
         if any(r.startswith("A") and r[1:].isdigit() for r in refs) and not re.search(r"analyst", point, re.I):
             point = point.rstrip(".") + " (raised by analysts on the call)."

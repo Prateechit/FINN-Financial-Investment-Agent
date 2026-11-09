@@ -63,17 +63,53 @@ def pick(concalls: list[dict], n: int = 5) -> list[dict]:
     return out
 
 
+_TURN = re.compile(r"\n\s*([A-Z][A-Za-z.'’\- ]{2,60}?)\s*:\s*\n")
+_INTRODUCED = re.compile(r"line of\s+(?:Mr\.?|Ms\.?|Mrs\.?|Dr\.?)?\s*([A-Z][A-Za-z.'’\-]+(?:\s+[A-Z][A-Za-z.'’\-]+){0,3}?)\s+(?:from|with|of)\b")
+
+
+def _person(name: str) -> str:
+    return docs.norm(re.sub(r"^(mr|ms|mrs|dr|shri)\.?\s+", "", name.strip(), flags=re.I))
+
+
+def speaker_at(full: str, statement: str, analysts: frozenset = frozenset()) -> str | None:
+    """The speaker label of the turn in which `statement` occurs ("Atul Lall:" on its own line).
+
+    Opening remarks often contain section headings in the same "Heading:" shape. Real speakers take several turns;
+    a heading appears once — so one-off labels are skipped unless the moderator introduced that person.
+    """
+    words = re.findall(r"\w+", statement)[:7]
+    m = re.search(r"\W+".join(map(re.escape, words)), full, re.I) if len(words) >= 3 else None
+    if not m:
+        return None
+    counts: dict = {}
+    for t in _TURN.finditer(full):
+        counts[t.group(1).strip()] = counts.get(t.group(1).strip(), 0) + 1
+    for t in reversed(list(_TURN.finditer(full, 0, m.start()))):
+        name = t.group(1).strip()
+        if counts[name] >= 2 or name.lower() == "moderator" or _person(name) in analysts:
+            return name
+    return None
+
+
 def extract(call: dict, idx: int) -> dict:
     doc = docs.pages(call["transcript"])
     body = "".join(f"\n[[p.{i + 1}]]\n{t}" for i, t in enumerate(doc["pages"]))[:MAX_CHARS]
     raw = chat_json(f"transcript:{call['quarter']}", "long", SYSTEM,
                     f"Transcript of the earnings call discussing {call['quarter']}:\n{body}", max_tokens=12000)
-    kept, dropped = [], 0
+    full = "\n" + "\n".join(doc["pages"])
+    analysts = {_person(n) for n in _INTRODUCED.findall(full)}  # the moderator introduces every questioner
+    kept, dropped, not_mgmt = [], 0, 0
     for j, g in enumerate(raw.get("guidance") or []):
         page = docs.find_quote(doc, g.get("statement") or "", g.get("page"))
         if page is None or not FORWARD.search(g.get("statement") or ""):
             dropped += 1
             continue
+        who = speaker_at(full, g["statement"], frozenset(analysts))
+        if who and (who.lower() == "moderator" or _person(who) in analysts):
+            not_mgmt += 1  # verbatim, forward-looking — but said by an analyst, so not a promise
+            continue
+        if who:
+            g["speaker"] = who
         g.update({"id": f"G{idx}.{j + 1}", "page": page, "call": call["quarter"], "call_label": call["label"],
                   "url": call["transcript"]})
         kept.append(g)
@@ -83,7 +119,8 @@ def extract(call: dict, idx: int) -> dict:
         if page:
             focus.append({**f, "page": page, "url": call["transcript"], "call": call["quarter"]})
     return {"call": call["quarter"], "label": call["label"], "url": call["transcript"], "pages": doc["n"],
-            "guidance": kept, "dropped_unverified": dropped, "business": _grounded_business(raw.get("business"), doc),
+            "guidance": kept, "dropped_unverified": dropped + not_mgmt, "dropped_not_management": not_mgmt,
+            "business": _grounded_business(raw.get("business"), doc),
             "analyst_focus": focus}
 
 

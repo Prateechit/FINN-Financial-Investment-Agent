@@ -51,6 +51,7 @@ def readable_ids(text: str, facts: dict) -> str:
     """Models occasionally write a fact id into prose ("Q.OPM %.Jun 2026 was 3%"); show the label instead."""
     for fid in sorted((f for f in facts if f in text), key=len, reverse=True):
         text = text.replace(fid, f"{facts[fid]['label'].replace(' %', '')} ({facts[fid]['period']})")
+    text = re.sub(r"\s*\((?:G\d+\.\d+(?:,\s*)?)+\)", "", text)  # "(G1.4)": guidance ids belong in citations, not prose
     # "fell -44.9%" → "fell 44.9%": the verb already carries the sign
     return re.sub(r"\b(fell|declined|dropped|decreased|contracted|shrank|down|lower) (by )?-(?=\d)", r"\1 \2", text)
 
@@ -70,14 +71,38 @@ def fmt(v: float, unit: str) -> str:
     return f"{v:g} {unit}"
 
 
+_MONTHS = {m: i for i, m in enumerate(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])}
+
+
+def _ordinal(period: str) -> int | None:
+    m = re.fullmatch(r"(\w{3}) (\d{4})", period)
+    return int(m.group(2)) * 12 + _MONTHS[m.group(1)] if m and m.group(1) in _MONTHS else None
+
+
 def _actuals_text(facts: dict) -> tuple[str, list[str]]:
+    """Facts a five-call ledger can need: the last 8 quarters and 4 years, plus every derived figure.
+
+    Older history adds tokens, not judgement — and a smaller prompt fits free tiers with per-minute token caps.
+    """
+    # Raw statement rows a guidance audit uses: top line, operating margin, profit, asset quality. Everything else it
+    # needs is a derived (calc.) or exchange-filing (X.) figure.
+    raw_keep = ("Sales.", "Revenue.", "OPM %.", "Operating Profit.", "Net Profit.", "Gross NPA %.", "Net NPA %.")
+    cands = [fid for fid in facts if fid.startswith(("calc.", "X."))
+             and not fid.startswith(("calc.net_worth.", "calc.cfo_pat.", "calc.fcf_5y"))
+             or fid.startswith(("Q.", "A.")) and fid.split(".", 1)[1].startswith(raw_keep)]
+    family = lambda fid: fid.rsplit(".", 1)[0] if _ordinal(facts[fid]["period"]) is not None else None  # noqa: E731
+    latest: dict = {}
+    for fid in cands:
+        if (fam := family(fid)) is not None:
+            latest[fam] = max(latest.get(fam, 0), _ordinal(facts[fid]["period"]))
     keep = []
-    for fid, f in facts.items():
-        if fid.startswith(("calc.", "Q.", "A.", "X.")) and not fid.startswith(("Q.Other", "A.Other", "A.EPS", "A.Interest", "A.Depreciation")):
+    for fid in cands:
+        fam = family(fid)
+        window = 21 if fid.startswith(("Q.", "calc.Q.")) else 36  # 8 quarters / 4 fiscal years
+        if fam is None or _ordinal(facts[fid]["period"]) >= latest[fam] - window:
             keep.append(fid)
-    # Most recent periods matter most; cap the prompt size.
-    keep = keep[-260:]
-    lines = [f"{fid} = {fmt(facts[fid]['value'], facts[fid]['unit'])} ({facts[fid]['label']}, {facts[fid]['period']})" for fid in keep]
+    lines = [f"{fid} = {fmt(facts[fid]['value'], facts[fid]['unit'])}" + ("" if facts[fid]["period"] in fid else f" ({facts[fid]['period']})")
+             + ("" if facts[fid]["label"].split(" (")[0] in fid else f" — {facts[fid]['label']}") for fid in keep]
     return "\n".join(lines), keep
 
 
@@ -85,8 +110,8 @@ def _guidance_text(calls: list[dict]) -> str:
     out = []
     for c in sorted(calls, key=lambda c: c["guidance"][0]["id"] if c.get("guidance") else "Z"):
         for g in c.get("guidance", []):
-            out.append(f"{g['id']} | call {g['call']} | {g['metric']} | {g.get('subject')} | target: {g.get('target')} | "
-                       f"horizon: {g.get('horizon')} | \"{g['statement']}\"")
+            out.append(f"{g['id']} | {g['call']} | {g.get('subject')} | target {g.get('target')} | {g.get('horizon')} | "
+                       f"\"{g['statement'][:240]}\"")
     return "\n".join(out)
 
 
@@ -100,11 +125,11 @@ def build(calls: list[dict], facts: dict, latest_quarter: str) -> dict:
     user = (f"Latest reported quarter: {latest_quarter}. Calls (oldest→newest): {', '.join(call_order)}.\n\n"
             f"GUIDANCE:\n{gtext}\n\nACTUALS:\n{actuals}")
     evidence = gtext + "\n" + actuals
-    out = chat_json("ledger", "reason", SYSTEM, user, max_tokens=10000)
+    out = chat_json("ledger", "reason", SYSTEM, user, max_tokens=20000)
     rows, problems = _validate(out, guidance, set(fact_ids), evidence)
     if problems:
         retry = user + "\n\nYour previous answer had these problems; fix them:\n- " + "\n- ".join(problems[:12])
-        out2 = chat_json("ledger_retry", "reason", SYSTEM, retry, max_tokens=10000)
+        out2 = chat_json("ledger_retry", "reason", SYSTEM, retry, max_tokens=20000)
         rows2, problems2 = _validate(out2, guidance, set(fact_ids), evidence)
         if len(problems2) < len(problems):
             out, rows, problems = out2, rows2, problems2
@@ -113,6 +138,7 @@ def build(calls: list[dict], facts: dict, latest_quarter: str) -> dict:
             r[k] = readable_ids(r.get(k) or "", facts)
         _metric_guard(r, facts)
         _range_check(r, guidance, facts)
+        _horizon_guard(r, guidance, latest_quarter)
         stances = {t["call"]: t for t in r.get("trajectory") or [] if t.get("call") in call_order}
         r["timeline"] = [{"call": c, **({"stance": stances[c]["stance"], "guidance_id": stances[c].get("guidance_id")}
                                          if c in stances else {"stance": "silent"})} for c in call_order]
@@ -170,6 +196,30 @@ _METRIC_GUARDS = [
     (r"cost[- ]to[- ]income|cost[- ]to[- ]earnings", r"cost_income", "cost-to-income ratio"),
     (r"\bgnpa\b|gross npa|asset quality", r"npa", "NPA ratio"),
 ]
+
+
+def _fy_of(quarter_end: str) -> int | None:
+    """'Sep 2026' → 27 (FY27)."""
+    o = _ordinal(quarter_end)
+    if o is None:
+        return None
+    year, month = divmod(o, 12)
+    return (year + 1 if month >= 3 else year) % 100
+
+
+def _horizon_guard(r: dict, guidance: dict, latest_quarter: str) -> None:
+    """'Missed' means the deadline has passed. If the latest guidance on this promise still has an open horizon
+    (a future fiscal year, 'medium term', 'next N years'), the honest verdict is 'at_risk'."""
+    if r["verdict"] != "missed":
+        return
+    fy = _fy_of(latest_quarter)
+    horizon = str(guidance[r["guidance_ids"][-1]].get("horizon") or "").lower()
+    years = [int(y) % 100 for y in re.findall(r"fy\s?'?(\d{2,4})", horizon)]
+    open_ended = re.search(r"medium|long|years?|next|coming|over the|ahead|future", horizon)
+    if open_ended or (fy and years and max(years) >= fy):
+        r["downgraded_from"] = "missed"
+        r["verdict"] = "at_risk"
+        r["why"] = f"The promise's horizon ({horizon}) has not ended, so it cannot be missed yet. " + (r.get("why") or "")
 
 
 def _metric_guard(r: dict, facts: dict) -> None:
