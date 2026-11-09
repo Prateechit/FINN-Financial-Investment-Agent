@@ -84,3 +84,21 @@ def find_quote(doc: dict, quote: str, hint_page: int | None = None) -> int | Non
             if all(norm(p) in hay for p in parts):
                 return i + 1
     return None
+
+
+_SUBJECT = re.compile(r"\b(?:sub(?:ject)?|re)\s*[:.\-–]\s*(.{8,260}?)"
+                      r"(?:\n\s*(?:dear|ref|respected|sir|madam|with reference|pursuant|in terms|this is)|\n\s*\n|$)",
+                      re.I | re.S)
+
+
+def subject(doc: dict) -> str | None:
+    """The 'Sub:' line Indian filings open with — a free, accurate title."""
+    for page in doc["pages"][:2]:
+        if m := _SUBJECT.search(page):
+            t = re.sub(r"\s+", " ", m.group(1)).strip(" .:-")
+            if q := re.search(r"titled\s*[“\"'](.+?)[”\"']", t):
+                t = q.group(1)
+            t = re.split(r"\s+(?:please find|this information|we wish to|we would like to)\b", t, flags=re.I)[0].strip(" .:-")
+            if len(t) >= 8:
+                return t[:240]
+    return None

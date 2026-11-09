@@ -56,26 +56,34 @@ def annual_revenue_cr(symbol: str) -> float | None:
 
 def process(a: Announcement, weight: float, settings: dict, use_llm: bool = True):
     cat, how = classify.rule_classify(a.exch_category, a.text)
-    if cat is None and a.pdf_url:  # peek at the document before paying for an LLM call
-        try:
-            first = " ".join(docs.pages(a.pdf_url, max_pages=2)["pages"])[:4000]
-            cat, how = classify.rule_classify(a.exch_category, f"{a.text} {first}")
-            how = "rule+pdf" if cat else how
-        except Exception:  # noqa: BLE001
-            pass
-    if cat is None:
-        cat, how = classify.classify(a.exch_category, a.text, use_llm=use_llm)
-    a.category, a.classified_by = cat, how
-    evidence = a.text or ""
     # Exchange summaries are often just "<company> has informed the Exchange about <category>".
-    # For anything that might matter, score on the document itself (no LLM, just text).
-    if len(enrich.clean_text(a.text)) < 80 and a.pdf_url and score.BASE.get(cat, 0) >= 30:
+    # When the summary is thin, read the document itself (plain text, no LLM) for the title, category and score.
+    doc_text = ""
+    generic = len(enrich.clean_text(a.text)) < 80
+    if a.pdf_url and (cat is None or (generic and score.BASE.get(cat, 0) >= 30)):
         try:
-            evidence += " " + " ".join(docs.pages(a.pdf_url, max_pages=3)["pages"])[:9000]
+            doc = docs.pages(a.pdf_url, max_pages=3)
+            a.subject = docs.subject(doc)
+            doc_text = " ".join(doc["pages"])[:9000]
         except Exception:  # noqa: BLE001
             pass
-    a.materiality, a.reasons = score.score(cat, a.exch_category, evidence, weight, _price_move(a.symbol, a.ts),
-                                           settings["price_move_pct"], annual_revenue_cr(a.symbol))
+    # Keyword rules only see the head of a document; whole bodies are full of incidental words
+    # ("customer acquisition", "disruptive technology") that would misfire.
+    head = f"{a.subject or ''} {a.text or ''} {_body_start(doc_text)}"
+    if cat is None and doc_text:
+        cat, how = classify.rule_classify(a.exch_category, head)
+        how = "rule+pdf" if cat else how
+    if cat is None:
+        cat, how = classify.classify(a.exch_category, f"{a.subject or ''} {a.text}", use_llm=use_llm)
+    a.category, a.classified_by = cat, how
+    a.materiality, a.reasons = score.score(cat, a.exch_category, head, weight, _price_move(a.symbol, a.ts),
+                                           settings["price_move_pct"], annual_revenue_cr(a.symbol), full_text=doc_text)
+
+
+def _body_start(doc_text: str, n: int = 1200) -> str:
+    """Opening of the letter after the exchange address block ('Dear Sir/Madam' onwards)."""
+    i = doc_text.lower().find("dear ")
+    return doc_text[i:i + n] if i >= 0 else doc_text[:n]
 
 
 def ingest_announcements(days: int = 3, symbols: list[str] | None = None, use_llm: bool = True) -> dict:

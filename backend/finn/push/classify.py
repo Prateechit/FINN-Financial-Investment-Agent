@@ -68,7 +68,7 @@ RULES = [
     ("pledging", r"\bpledg|encumbranc|regulation 31\b"),
     ("insider_trading", r"regulation 7\(2\)|regulation 29|insider trading|sast\b|acquisition of shares by promoter|inter[- ]se transfer"),
     ("results", r"financial results?|results? for the (quarter|half|year)|quarter (and half year )?ended|unaudited|audited (standalone|consolidated)|earnings release|shareholders'? letter"
-                r"|results? presentation|earnings presentation|(q[1-4]|h[12]|fy ?\d{2,4})[^.]{0,30}results"),
+                r"|results? presentation|earnings presentation|(q[1-4]|h[12]|fy ?\d{2,4})[^.]{0,30}\bresults\b"),
     ("credit_rating", r"credit rating|\brating\b.*(crisil|icra|care|india ratings|brickwork|acuite)"),
     ("M&A", r"acqui(re|sition)|amalgamat|merger|demerg|joint venture|\bjv\b|stake (sale|in)|wholly[- ]owned subsidiary|share purchase agreement|divest"),
     ("fund_raise", r"buy[- ]?back|rights issue|\bqip\b|qualified institutions? placement|preferential (issue|allotment)|warrants|commercial paper|non[- ]convertible debenture|\bncds?\b|fund rais|raising of funds"),

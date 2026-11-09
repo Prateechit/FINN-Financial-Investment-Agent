@@ -75,11 +75,16 @@ def compute(settings: dict, days: int = 7) -> list[dict]:
             m["id"] = f"{m['kind']}:{sym}:{m['date']}"
             alerts.append(m)
     cutoff = dt.datetime.now() - dt.timedelta(days=days)
-    for a in anns:
+    seen = set()  # one alert per company/category/day — a results outcome, press release and deck are one event
+    for a in sorted(anns, key=lambda a: -a.materiality):
+        key = (a.symbol, a.category, a.ts.date())
+        if key in seen:
+            continue
         if a.ts >= cutoff and a.category in settings["alert_categories"] and a.materiality >= settings["min_alert_materiality"]:
+            seen.add(key)
             alerts.append({"id": f"ann:{a.id}", "kind": "announcement", "symbol": a.symbol, "date": a.ts.date().isoformat(),
                            "ts": a.ts.isoformat(), "category": a.category, "materiality": a.materiality,
                            "title": f"{a.symbol} · {a.category.replace('_', ' ')}", "announcement_id": a.id,
-                           "text": a.summary or a.text})
+                           "text": a.summary or a.subject or a.text})
     alerts.sort(key=lambda x: (x["date"], x.get("ts", "")), reverse=True)
     return alerts

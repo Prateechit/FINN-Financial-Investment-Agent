@@ -29,6 +29,7 @@ ADJUST = [
     ("M&A", r"completion|completed|consummat", -10, "Completion of a previously announced deal"),
     ("M&A", r"open offer|demerg|amalgamat|merger", 10, "Structural change to the company"),
     ("fund_raise", r"buy[- ]?back", 8, "Buyback — capital returned to shareholders"),
+    ("fund_raise", r"reminder|call money|first and final call", -40, "Call-money reminder on partly-paid shares"),
     ("fund_raise", r"\bqip\b|qualified institution|preferential|rights issue", 8, "Equity dilution"),
     ("fund_raise", r"commercial paper|\bncd|debenture|non[- ]convertible", -30, "Routine debt issuance"),
     ("earnings_call", r"transcript", 20, "Transcript — updates the Promise Ledger"),
@@ -40,7 +41,7 @@ ADJUST = [
     ("press_release", r"rumou?r|news (item|verification)|clarification", 20, "Exchange-sought clarification on news"),
     ("press_release", r"spurt in volume|price movement", 10, "Exchange query on unusual trading"),
     ("press_release", r"order|contract", 12, "Order win / contract"),
-    ("press_release", r"fire|strike|lockout|disruption|closure|suspension|cancell", 30, "Operational disruption"),
+    ("press_release", r"\bfire\b|\bstrikes?\b|lockout|disruption of operations|closure of (the )?(plant|unit|facility|operations)|suspension of (operations|production|license)|cancell?ation of (license|order|contract)", 30, "Operational disruption"),
     ("press_release", r"monthly business update|production|sales volume", 5, "Monthly operating data"),
     ("dividend", r"special dividend", 15, "Special dividend"),
     ("unclassified", r"resignation of statutory auditor|auditor.*resign", 69, "Auditor resigned mid-term — governance red flag"),
@@ -55,15 +56,22 @@ def tier(score: int) -> str:
 
 
 def score(category: str, exch_category: str, text: str, weight: float = 0.0, price_move_pct: float | None = None,
-          move_threshold: float = 4.0, annual_revenue_cr: float | None = None) -> tuple[int, list[str]]:
+          move_threshold: float = 4.0, annual_revenue_cr: float | None = None, full_text: str = "") -> tuple[int, list[str]]:
     s = BASE.get(category, 10)
     reasons = [f"{category.replace('_', ' ')} base {s}"]
     blob = f"{exch_category} {text}"
+    best_pos = None
     for c, rx, adj, why in _ADJ:
         if c == category and rx.search(blob):
-            s += adj
-            reasons.append(f"{why} ({adj:+d})")
-    if category == "litigation" and (pen := penalty_adjustment(blob, annual_revenue_cr)):
+            if adj < 0:
+                s += adj
+                reasons.append(f"{why} ({adj:+d})")
+            elif best_pos is None or adj > best_pos[0]:
+                best_pos = (adj, why)
+    if best_pos:  # positive signals do not stack — one strong reason is enough to escalate
+        s += best_pos[0]
+        reasons.append(f"{best_pos[1]} ({best_pos[0]:+d})")
+    if category == "litigation" and (pen := penalty_adjustment(f"{blob} {full_text}", annual_revenue_cr)):
         s += pen[0]
         reasons.append(f"{pen[1]} ({pen[0]:+d})")
     if weight and s >= 30:

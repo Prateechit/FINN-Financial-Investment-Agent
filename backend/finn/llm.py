@@ -78,13 +78,16 @@ def chat_json(task: str, tier: str, system: str, user: str, max_tokens: int = 20
             continue
         model = os.getenv(f"FINN_MODEL_{provider.upper()}_{tier.upper()}", model)
         ck = "llm:" + hashlib.sha256(json.dumps([model, system, user]).encode()).hexdigest()
-        if (hit := kv_get(ck)) is not None:
+        if hit := kv_get(ck):  # empty answers are never cached
             _log(task=task, provider=provider, model=model, cache_hit=True)
             return hit
         base = PROVIDERS[provider][0]
+        # Long documents push the instructions out of a model's attention; repeat them after the document.
+        content = user if len(user) < 15000 else f"{user}\n\n---\nINSTRUCTIONS (repeated):\n{system}\nReply with the JSON only."
         body = {"model": model, "temperature": temperature, "max_tokens": max_tokens,
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                "response_format": {"type": "json_object"}}
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}]}
+        if provider != "ollama":
+            body["response_format"] = {"type": "json_object"}
         if provider == "groq" and "gpt-oss" in model:
             body["reasoning_effort"] = "medium"
         t0 = time.time()
@@ -108,6 +111,7 @@ def chat_json(task: str, tier: str, system: str, user: str, max_tokens: int = 20
         usage = data.get("usage") or {}
         _log(task=task, provider=provider, model=model, ms=int((time.time() - t0) * 1000),
              tokens_in=usage.get("prompt_tokens", 0), tokens_out=usage.get("completion_tokens", 0))
-        kv_set(ck, out)
+        if out:
+            kv_set(ck, out)
         return out
     raise LLMUnavailable(f"no {tier} model succeeded: " + ("; ".join(errors) or "no API key configured"))

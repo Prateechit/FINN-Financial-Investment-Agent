@@ -48,6 +48,7 @@ class Announcement(Base):
     ts: Mapped[dt.datetime] = mapped_column(DateTime, index=True)  # IST, naive
     exch_category: Mapped[str | None] = mapped_column(String(200))
     text: Mapped[str | None] = mapped_column(Text)
+    subject: Mapped[str | None] = mapped_column(String(300))  # "Sub:" line of the filing
     pdf_url: Mapped[str | None] = mapped_column(String(500))
     category: Mapped[str | None] = mapped_column(String(40), index=True)
     classified_by: Mapped[str | None] = mapped_column(String(20))
