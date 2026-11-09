@@ -5,7 +5,8 @@ import zipfile
 
 import requests
 import yfinance as yf
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.orm import aliased
 
 from ..config import UA
 from ..db import PriceEOD, session
@@ -65,6 +66,25 @@ def update(symbols: list[str]) -> dict:
                 break
             day -= dt.timedelta(days=1)
         return {"source": "bhavcopy", "rows": n, "yfinance_error": str(e)[:200]}
+
+
+def history_many(symbols, days: int = 90) -> dict[str, list[PriceEOD]]:
+    """history() for many symbols in ONE query — a remote database makes per-symbol queries expensive.
+
+    Same semantics as history(): the last `days` rows per symbol whatever their dates (so stale data still renders),
+    via ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY date DESC). Works on SQLite and Postgres.
+    """
+    symbols = sorted(set(symbols))
+    if not symbols:
+        return {}
+    rn = func.row_number().over(partition_by=PriceEOD.symbol, order_by=PriceEOD.date.desc()).label("rn")
+    ranked = select(PriceEOD, rn).where(PriceEOD.symbol.in_(symbols)).subquery()
+    latest = aliased(PriceEOD, ranked)
+    out: dict[str, list[PriceEOD]] = {s: [] for s in symbols}
+    with session() as s:
+        for r in s.scalars(select(latest).where(ranked.c.rn <= days).order_by(latest.symbol, latest.date)):
+            out[r.symbol].append(r)
+    return out
 
 
 def history(symbol: str, days: int = 90) -> list[PriceEOD]:

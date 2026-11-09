@@ -1,6 +1,7 @@
 import csv
 import datetime as dt
 import io
+import json
 import threading
 
 import requests
@@ -46,13 +47,13 @@ def health():
 
 # ---------------- push ----------------
 
-def _story(group: list[Announcement], names: dict) -> dict:
+def _story(group: list[Announcement], names: dict, hist: dict | None = None) -> dict:
     group.sort(key=lambda a: (-a.materiality, -(1 if a.enrichment and a.enrichment.get("status") == "ok" else 0), a.ts))
     p = group[0]
     return {"id": p.id, "symbol": p.symbol, "name": names.get(p.symbol, p.symbol), "category": p.category,
             "tier": tier(p.materiality), "materiality": p.materiality, "reasons": p.reasons, "ts": p.ts.isoformat(),
             "title": _title(p), "subject": p.subject, "summary": p.summary, "text": clean_text(p.text), "exch_category": p.exch_category,
-            "pdf_url": p.pdf_url, "enrichment": p.enrichment, "reaction": _reaction(p.symbol, p.ts),
+            "pdf_url": p.pdf_url, "enrichment": p.enrichment, "reaction": _reaction(p.symbol, p.ts, (hist or {}).get(p.symbol)),
             "related": [{"id": a.id, "ts": a.ts.isoformat(), "exch_category": a.exch_category, "text": clean_text(a.text)[:160],
                          "pdf_url": a.pdf_url} for a in sorted(group[1:], key=lambda a: a.ts)]}
 
@@ -71,9 +72,9 @@ def _cluster(rows: list[Announcement]) -> list[list[Announcement]]:
     return groups
 
 
-def _reaction(sym: str, ts: dt.datetime) -> dict | None:
+def _reaction(sym: str, ts: dt.datetime, h: list | None = None) -> dict | None:
     """Price move in the first session that could react to a filing (after 15:30 → next session)."""
-    h = prices.history(sym, 40)
+    h = h if h is not None else prices.history(sym, 40)
     days = [r.date for r in h]
     d = alerts_mod._session_date(ts, days)
     if d is None:
@@ -91,7 +92,8 @@ def digest(hours: int = Query(24, ge=1, le=24 * 30)):
         names = {c.symbol: c.name or c.symbol for c in s.scalars(select(Company))}
         port = {c.symbol for c in s.scalars(select(Company).where(Company.in_portfolio))}
         rows = list(s.scalars(select(Announcement).where(Announcement.ts >= since, Announcement.symbol.in_(port))))
-    stories = [_story(g, names) for g in _cluster(rows)]
+    hist = prices.history_many({a.symbol for a in rows}, 40)  # one query, not one per story
+    stories = [_story(g, names, hist) for g in _cluster(rows)]
     stories.sort(key=lambda x: (-x["materiality"], x["ts"]))
     material = [s for s in stories if s["tier"] != "routine"]
     routine = [s for s in stories if s["tier"] == "routine"]
@@ -135,9 +137,10 @@ def portfolio():
         since = dt.datetime.now() - dt.timedelta(days=7)
         counts = dict(s.execute(select(Announcement.symbol, func.count()).where(Announcement.ts >= since, Announcement.materiality >= 45)
                                 .group_by(Announcement.symbol)).all())
+    hist = prices.history_many([c.symbol for c in comps], 30)
     out = []
     for c in comps:
-        h = prices.history(c.symbol, 30)
+        h = hist[c.symbol]
         last, prev = (h[-1], h[-2]) if len(h) >= 2 else (None, None)
         out.append({"symbol": c.symbol, "name": c.name, "sector": c.sector, "weight": c.weight,
                     "close": last.close if last else None, "date": last.date.isoformat() if last else None,
@@ -205,10 +208,10 @@ def research_get(symbol: str):
 def research_list():
     with session() as s:
         from .db import KV
-        keys = list(s.scalars(select(KV.key).where(KV.key.like("research:%"))))
+        values = list(s.scalars(select(KV.value).where(KV.key.like("research:%"))))  # one query for all memos
     out = []
-    for k in keys:
-        st = kv_get(k) or {}
+    for v in values:
+        st = json.loads(v) or {}
         snap = (st.get("sections") or {}).get("snapshot") or {}
         out.append({"symbol": st.get("symbol"), "name": snap.get("name"), "status": st.get("status"), "updated": st.get("updated"),
                     "verdicts": ((st.get("sections") or {}).get("ledger") or {}).get("counts")})

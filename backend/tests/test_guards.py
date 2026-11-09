@@ -169,3 +169,36 @@ def test_missed_requires_an_ended_horizon():
     ended_row = {"verdict": "missed", "guidance_ids": ["G2"], "why": ""}
     ledger._horizon_guard(ended_row, g, "Sep 2026")
     assert ended_row["verdict"] == "missed"  # FY26 ended before the Sep 2026 (FY27) quarter
+
+
+def test_history_many_matches_history_even_on_stale_data(monkeypatch):
+    """The batched query must return exactly what per-symbol history() returns — including when prices are old."""
+    import contextlib
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from finn.db import Base, PriceEOD
+    from finn.sources import prices
+
+    eng = create_engine("sqlite://")
+    Base.metadata.create_all(eng)
+    S = sessionmaker(eng, expire_on_commit=False)
+
+    @contextlib.contextmanager
+    def local_session():
+        s = S()
+        try:
+            yield s
+            s.commit()
+        finally:
+            s.close()
+
+    monkeypatch.setattr(prices, "session", local_session)
+    with local_session() as s:  # two symbols, 90 sessions each, ending years ago
+        for i in range(90):
+            for sym, base in (("AAA", 100), ("BBB", 50)):
+                s.add(PriceEOD(symbol=sym, date=dt.date(2020, 1, 1) + dt.timedelta(days=i), close=base + i, volume=1000 + i))
+    key = lambda rows: [(r.symbol, r.date, r.close) for r in rows]  # noqa: E731
+    many = prices.history_many(["AAA", "BBB", "ZZZ"], 40)
+    assert key(many["AAA"]) == key(prices.history("AAA", 40)) and len(many["AAA"]) == 40
+    assert key(many["BBB"]) == key(prices.history("BBB", 40))
+    assert many["ZZZ"] == []

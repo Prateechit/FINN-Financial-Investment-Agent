@@ -21,9 +21,11 @@ REDACT = [
 
 def _env_secrets() -> list[str]:
     """Literal values from backend/.env — key formats change, so pattern matching alone is not enough."""
-    env = pathlib.Path(__file__).resolve().parent.parent / "backend" / ".env"
+    root = pathlib.Path(__file__).resolve().parent.parent
     vals = []
-    if env.exists():
+    for env in (root / "backend" / ".env", root / ".env.local", root / ".env"):
+        if not env.exists():
+            continue
         for line in env.read_text(encoding="utf-8").splitlines():
             if "=" in line and not line.lstrip().startswith("#"):
                 v = line.split("=", 1)[1].split(" #")[0].strip().strip("'\"")

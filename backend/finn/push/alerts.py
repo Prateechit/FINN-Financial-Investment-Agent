@@ -11,7 +11,7 @@ import statistics
 from sqlalchemy import select
 
 from ..db import Announcement, Company, session
-from ..sources.prices import history
+from ..sources.prices import history, history_many
 from .present import title as filing_title
 
 MARKET_CLOSE = dt.time(15, 30)
@@ -26,12 +26,12 @@ def _session_date(ts: dt.datetime, trading_days: list[dt.date]) -> dt.date | Non
     return None
 
 
-def eod_moves(symbol: str, settings: dict, days: int = 7) -> list[dict]:
+def eod_moves(symbol: str, settings: dict, days: int = 7, rows: list | None = None) -> list[dict]:
     override = (settings.get("overrides") or {}).get(symbol, {})
     pct_th = override.get("price_move_pct", settings["price_move_pct"])
     vol_th = override.get("volume_multiple", settings["volume_multiple"])
     look = settings["volume_lookback_days"]
-    rows = history(symbol, look + days + 5)
+    rows = rows if rows is not None else history(symbol, look + days + 5)
     out = []
     for i in range(max(look + 1, len(rows) - days), len(rows)):
         cur, prev = rows[i], rows[i - 1]
@@ -69,9 +69,10 @@ def compute(settings: dict, days: int = 7) -> list[dict]:
         since = dt.datetime.now() - dt.timedelta(days=days + 3)
         anns = list(s.scalars(select(Announcement).where(Announcement.ts >= since, Announcement.symbol.in_(symbols))))
     alerts = []
+    hist = history_many(symbols, max(60, settings["volume_lookback_days"] + days + 5))  # one query for the portfolio
     for sym in symbols:
-        trading = [r.date for r in history(sym, 40)]
-        moves = eod_moves(sym, settings, days)
+        trading = [r.date for r in hist[sym][-40:]]
+        moves = eod_moves(sym, settings, days, hist[sym][-(settings["volume_lookback_days"] + days + 5):])
         sym_anns = [a for a in anns if a.symbol == sym and a.materiality >= 25]
         for m in moves:
             d = dt.date.fromisoformat(m["date"])

@@ -29,7 +29,7 @@ def main(argv: list[str]):
         print(ingest.enrich_pending(retry_now="--retry" in argv))
     elif cmd == "research":
         from .pull import research
-        for sym in argv[1:]:
+        for sym in (a for a in argv[1:] if not a.startswith("--")):  # flags are not symbols
             r = research.build(sym.upper(), force="--force" in argv)
             print(sym, r.get("status"), [k for k, v in r.get("sections", {}).items() if v])
     elif cmd == "all":
