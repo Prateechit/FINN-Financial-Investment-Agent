@@ -12,16 +12,46 @@ const SUGGESTED = [
   { symbol: 'HDFCBANK', why: 'Bank format: NII, provisions, NPAs' },
 ]
 
+type Hit = { symbol: string; name: string }
+const lookup = (query: string) => api<Hit[]>(`/api/search?q=${encodeURIComponent(query)}`)
+
 export default function Research({ go }: { go: (r: string) => void }) {
   const [q, setQ] = useState('')
-  const [hits, setHits] = useState<{ symbol: string; name: string }[]>([])
+  // Results are tagged with the exact text they were fetched for, so a slow or out-of-order response can never be
+  // shown or opened for different text than what is in the box.
+  const [results, setResults] = useState<{ for: string; hits: Hit[] }>({ for: '', hits: [] })
+  const [resolving, setResolving] = useState(false)
+  const [noMatch, setNoMatch] = useState<string | null>(null)
   const { data: recent } = useApi<{ symbol: string; name?: string; status: string; updated: string; verdicts?: Record<string, number> }[]>('/api/research')
+  const query = q.trim()
+  const hits = results.for === query ? results.hits : []
 
   useEffect(() => {
-    if (!q.trim()) { setHits([]); return }
-    const t = setTimeout(() => api<{ symbol: string; name: string }[]>(`/api/search?q=${encodeURIComponent(q)}`).then(setHits).catch(() => setHits([])), 180)
+    setNoMatch(null)
+    if (!query) { setResults({ for: '', hits: [] }); return }
+    const t = setTimeout(() => lookup(query).then((h) => setResults({ for: query, hits: h })).catch(() => setResults({ for: query, hits: [] })), 180)
     return () => clearTimeout(t)
-  }, [q])
+  }, [query])
+
+  // Enter opens the top match for the text as typed — waiting for the search if it hasn't answered yet — and never
+  // opens a memo for free text that matched nothing.
+  const openTopMatch = async () => {
+    if (!query || resolving) return
+    let list = results.for === query ? results.hits : null
+    if (list === null) {
+      setResolving(true)
+      try {
+        list = await lookup(query)
+        setResults({ for: query, hits: list })
+      } catch {
+        list = []
+      } finally {
+        setResolving(false)
+      }
+    }
+    if (list[0]) go(`memo/${list[0].symbol}`)
+    else setNoMatch(query)
+  }
 
   return (
     <div className="mx-auto max-w-xl px-4 pt-[calc(env(safe-area-inset-top)+16px)]">
@@ -31,7 +61,8 @@ export default function Research({ go }: { go: (r: string) => void }) {
       <div className="relative mt-4">
         <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 size-5 -translate-y-1/2 text-ink3" />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Company or NSE symbol"
-          onKeyDown={(e) => { if (e.key === 'Enter' && (hits[0] || q.trim())) go(`memo/${(hits[0]?.symbol ?? q.trim()).toUpperCase()}`) }}
+          onKeyDown={(e) => { if (e.key === 'Enter') openTopMatch() }}
+          aria-busy={resolving}
           className="h-12 w-full rounded-xl border border-line bg-card pl-10 pr-3 text-[16px] outline-none placeholder:text-ink3 focus:border-ink3"
           autoCapitalize="characters" autoCorrect="off" spellCheck={false} />
         {hits.length > 0 && (
@@ -45,6 +76,12 @@ export default function Research({ go }: { go: (r: string) => void }) {
           </Card>
         )}
       </div>
+      {resolving && <p className="mt-2 px-1 text-[12.5px] text-ink3">Finding the NSE symbol…</p>}
+      {noMatch && !resolving && (
+        <p className="mt-2 px-1 text-[12.5px] text-down" role="alert">
+          No NSE-listed company matches “{noMatch}”. Try the ticker symbol, e.g. TATATECH.
+        </p>
+      )}
 
       {!!recent?.length && (
         <>

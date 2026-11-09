@@ -10,3 +10,4 @@ dist/
 backend/.cache/
 .neon
 .env.local
+.env.*.tmp

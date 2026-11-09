@@ -19,7 +19,7 @@ from .push.enrich import clean_text
 from .push.present import short_title as _title
 from .push.score import tier
 from .pull import research
-from .sources import prices
+from .sources import prices, symbols
 
 app = FastAPI(title="FINN API", version="1.0")
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
@@ -191,14 +191,47 @@ def _public(state: dict) -> dict:
     return out
 
 
+def _resolve(raw: str) -> dict:
+    """Map what the user typed (ticker or company name) to an NSE symbol before any provider is called."""
+    try:
+        rows = _equity_list()
+    except Exception:  # noqa: BLE001 — NSE list unreachable: accept ticker-shaped input as before, nothing else
+        q = raw.strip().upper()
+        ok = bool(symbols.TICKER.fullmatch(q))
+        return {"symbol": q if ok else None, "matched_by": "symbol" if ok else None, "suggestions": [],
+                "list_unavailable": True}
+    return symbols.resolve(raw, rows)
+
+
+def _unresolved(raw: str, res: dict) -> dict:
+    sugg = res.get("suggestions") or []
+    if res.get("list_unavailable"):
+        msg = f"“{raw.strip()}” doesn’t look like an NSE symbol, and the NSE symbol list is unreachable right now. Try the ticker."
+    elif sugg:
+        msg = f"“{raw.strip()}” matches several NSE companies. Did you mean: " + \
+            ", ".join(f"{s['symbol']} ({s['name']})" for s in sugg) + "?"
+    else:
+        msg = f"No NSE-listed company matches “{raw.strip()}”. Try the ticker symbol, e.g. TATATECH."
+    return {"symbol": raw.strip().upper(), "status": "error", "stage": "", "errors": [msg], "sections": {},
+            "suggestions": sugg}
+
+
 @app.post("/api/research/{symbol}")
 def research_start(symbol: str, force: bool = False):
-    return _public(research.start(symbol, force))
+    res = _resolve(symbol)
+    if not res["symbol"]:
+        return _unresolved(symbol, res)  # nothing is started or stored
+    out = _public(research.start(res["symbol"], force))
+    if res["symbol"] != symbol.strip().upper():
+        out["resolved_from"] = symbol.strip()
+    return out
 
 
 @app.get("/api/research/{symbol}")
 def research_get(symbol: str):
-    st = research.get(symbol.upper())
+    res = _resolve(symbol)
+    # Resolved symbol first, so "Tata Technologies" reads TATATECH's memo; exact key second, for older records.
+    st = (research.get(res["symbol"]) if res["symbol"] else None) or research.get(symbol.strip().upper())
     if not st:
         raise HTTPException(404, "not started")
     return _public(st)
@@ -231,15 +264,12 @@ def _equity_list() -> list[dict]:
 
 @app.get("/api/search")
 def search(q: str = Query(..., min_length=1)):
-    q = q.strip().upper()
     try:
         rows = _equity_list()
     except Exception:  # noqa: BLE001 — fall back to known companies
         with session() as s:
             rows = [{"symbol": c.symbol, "name": c.name or c.symbol} for c in s.scalars(select(Company))]
-    starts = [r for r in rows if r["symbol"].startswith(q)]
-    contains = [r for r in rows if r not in starts and (q in r["symbol"] or q in r["name"].upper())]
-    return (starts + contains)[:12]
+    return symbols.search_rows(q, rows)
 
 
 # ---------------- ops ----------------

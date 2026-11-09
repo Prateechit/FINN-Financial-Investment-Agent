@@ -175,5 +175,14 @@ def start(sym: str, force: bool = False) -> dict:
             with _lock:
                 _running.discard(sym)
 
+    # Persist "running" before the thread starts, so a poll that arrives before the build's first save finds a
+    # record (not a 404). Earlier sections are kept so a rebuild doesn't blank an existing memo meanwhile.
+    stamp = now().isoformat()
+    state = {"symbol": sym, "status": "running", "stage": "Starting", "started": stamp, "updated": stamp,
+             "sections": (prev or {}).get("sections", {}), "errors": []}
+    try:
+        kv_set(_key(sym), state)
+    except Exception:  # noqa: BLE001 — a failed write must not stop the build; the build saves its own state
+        pass
     threading.Thread(target=run, daemon=True).start()
-    return {"symbol": sym, "status": "running", "stage": "Starting", "sections": (prev or {}).get("sections", {})}
+    return state
