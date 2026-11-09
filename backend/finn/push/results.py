@@ -6,15 +6,14 @@ No LLM is involved; every figure is traceable to a filing.
 import datetime as dt
 
 from ..db import kv_get, kv_set
+from ..pull import periods
 from ..sources import nse, screener
 
 CR = 1e7
 
 
 def fy_label(d: dt.date) -> str:
-    fy = d.year + 1 if d.month >= 4 else d.year
-    q = ((d.month - 4) % 12) // 3 + 1
-    return f"Q{q} FY{fy % 100:02d}"
+    return periods.from_date(d).label
 
 
 def _shift(d: dt.date, months: int) -> dt.date:

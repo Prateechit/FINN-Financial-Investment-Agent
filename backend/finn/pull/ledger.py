@@ -8,6 +8,7 @@ import re
 
 from ..grounding import ungrounded
 from ..llm import chat_json
+from . import periods
 
 VERDICTS = ["delivered", "missed", "on_track", "at_risk", "goalposts_moved", "dropped", "too_early", "unverifiable"]
 
@@ -38,6 +39,14 @@ Rules:
 - No proxies: judge a promise only with a fact that measures the same thing (NIM ≠ PAT margin, ROA ≠ profit,
   credit-deposit ratio ≠ debt/equity, balance-sheet growth ≠ revenue growth). If no such fact exists the verdict is
   "unverifiable" — say which figure is missing. Facts marked "(exchange filing)" are the company's own XBRL figures.
+- Periods: India's fiscal year runs April–March. Q1 = Apr–Jun, Q2 = Jul–Sep, Q3 = Oct–Dec, Q4 = Jan–Mar, and FY26
+  ends in March 2026 — so "Mar 2026" is Q4 FY26 and "Sep 2026" is Q2 FY27. Each GUIDANCE line states the fiscal period
+  the promise is about; each ACTUALS line is tagged with its fiscal period in [brackets]. Judge a promise only with
+  facts from its own period (plus the quarter before for a sequential promise, or the same quarter a year earlier for
+  a year-on-year one) — never with the latest quarter just because it is latest. A quarter or half-year that has not
+  started yet is "too_early".
+- Sequential (quarter-on-quarter) promises: cite calc.Q.revenue_qoq / calc.Q.pat_qoq for that quarter. Margin
+  promises: prefer calc.Q.ebitda_margin (exact) over the rounded OPM %.
 
 Return JSON:
 {"rows":[{"subject":"short label, e.g. 'FY27 revenue growth'","metric":"metric type","promise":"max 18 words: target + horizon",
@@ -101,16 +110,24 @@ def _actuals_text(facts: dict) -> tuple[str, list[str]]:
         window = 21 if fid.startswith(("Q.", "calc.Q.")) else 36  # 8 quarters / 4 fiscal years
         if fam is None or _ordinal(facts[fid]["period"]) >= latest[fam] - window:
             keep.append(fid)
-    lines = [f"{fid} = {fmt(facts[fid]['value'], facts[fid]['unit'])}" + ("" if facts[fid]["period"] in fid else f" ({facts[fid]['period']})")
-             + ("" if facts[fid]["label"].split(" (")[0] in fid else f" — {facts[fid]['label']}") for fid in keep]
-    return "\n".join(lines), keep
+    def line(fid):
+        f = facts[fid]
+        fiscal = periods.tag(fid, f["period"])  # "Q.Sales.Mar 2026" → [Q4 FY26]; "A.Sales.Mar 2026" → [FY26]
+        return (f"{fid} = {fmt(f['value'], f['unit'])}" + ("" if f["period"] in fid else f" ({f['period']})")
+                + (f" [{fiscal}]" if fiscal else "")
+                + ("" if f["label"].split(" (")[0] in fid else f" — {f['label']}"))
+    return "\n".join(line(fid) for fid in keep), keep
 
 
 def _guidance_text(calls: list[dict]) -> str:
     out = []
     for c in sorted(calls, key=lambda c: c["guidance"][0]["id"] if c.get("guidance") else "Z"):
         for g in c.get("guidance", []):
-            out.append(f"{g['id']} | {g['call']} | {g.get('subject')} | target {g.get('target')} | {g.get('horizon')} | "
+            p = periods.promise_period(g)
+            said = g.get("horizon")
+            when = (f"period {p.label}" + (f" (said: {said!r})" if said and said.strip().upper() != p.label.upper() else "")
+                    if p else f"horizon {said!r}")
+            out.append(f"{g['id']} | {g['call']} call | {g.get('subject')} | target {g.get('target')} | {when} | "
                        f"\"{g['statement'][:240]}\"")
     return "\n".join(out)
 
@@ -137,6 +154,7 @@ def build(calls: list[dict], facts: dict, latest_quarter: str) -> dict:
         for k in ("promise", "delivered", "why"):
             r[k] = readable_ids(r.get(k) or "", facts)
         _metric_guard(r, facts)
+        _period_guard(r, guidance, facts, periods.from_calendar(latest_quarter))
         _range_check(r, guidance, facts)
         _horizon_guard(r, guidance, latest_quarter)
         stances = {t["call"]: t for t in r.get("trajectory") or [] if t.get("call") in call_order}
@@ -198,13 +216,27 @@ _METRIC_GUARDS = [
 ]
 
 
-def _fy_of(quarter_end: str) -> int | None:
-    """'Sep 2026' → 27 (FY27)."""
-    o = _ordinal(quarter_end)
-    if o is None:
-        return None
-    year, month = divmod(o, 12)
-    return (year + 1 if month >= 3 else year) % 100
+def _promise(r: dict, guidance: dict) -> periods.Period | None:
+    """The period the row's promise is about: from its most recent guidance item that names one."""
+    return periods.latest_promise([guidance[g] for g in r["guidance_ids"] if g in guidance])
+
+
+def _period_guard(r: dict, guidance: dict, facts: dict, latest: periods.FQ | None) -> None:
+    """Evidence must come from the promise's own period; a period that hasn't started can only be 'too_early'."""
+    promise = _promise(r, guidance)
+    cited = [(fid, periods.fact_period(fid, facts[fid]["period"])) for fid in r["fact_ids"]]
+    result = periods.check(r["verdict"], promise, cited, latest)
+    if not result:
+        return
+    verdict, reason = result
+    r["downgraded_from"], r["verdict"], r["why"] = r["verdict"], verdict, reason
+    r["period_check"] = {"promise_period": promise.label, "latest": latest.label,
+                         "cited": [p.label if p else None for _, p in cited]}
+    if verdict == "unverifiable":  # wrong-period figures are not evidence for this promise
+        r["rejected_fact_ids"], r["fact_ids"] = r["fact_ids"], []
+        r["delivered"] = f"No reported figure for {promise.label} was cited."
+    else:
+        r["delivered"] = f"{promise.label} has not been reported yet."
 
 
 def _horizon_guard(r: dict, guidance: dict, latest_quarter: str) -> None:
@@ -212,7 +244,14 @@ def _horizon_guard(r: dict, guidance: dict, latest_quarter: str) -> None:
     (a future fiscal year, 'medium term', 'next N years'), the honest verdict is 'at_risk'."""
     if r["verdict"] != "missed":
         return
-    fy = _fy_of(latest_quarter)
+    latest = periods.from_calendar(latest_quarter)
+    promise = _promise(r, guidance)
+    if promise and latest:  # resolved period: the deadline is its last quarter
+        if promise.end > latest:
+            r["downgraded_from"], r["verdict"] = "missed", "at_risk"
+            r["why"] = f"The promise's period ({promise.label}) has not ended, so it cannot be missed yet. " + (r.get("why") or "")
+        return
+    fy = latest.fy if latest else None
     horizon = str(guidance[r["guidance_ids"][-1]].get("horizon") or "").lower()
     years = [int(y) % 100 for y in re.findall(r"fy\s?'?(\d{2,4})", horizon)]
     open_ended = re.search(r"medium|long|years?|next|coming|over the|ahead|future", horizon)

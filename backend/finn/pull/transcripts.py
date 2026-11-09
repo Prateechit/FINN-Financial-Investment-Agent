@@ -5,8 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from ..grounding import ungrounded
 from ..llm import chat_json
-from ..push.results import fy_label
 from ..sources import docs
+from . import periods
 
 MAX_CHARS = 90_000
 
@@ -41,11 +41,15 @@ analyst_focus: at most 4 — the issues analysts pressed hardest on. Copy text e
 
 def quarter_discussed(call_date: dt.date) -> str:
     """A call in Nov discusses the Sep quarter; Feb → Dec; May → Mar; Aug → Jun."""
-    m = call_date.month
-    qe_month = {1: 12, 2: 12, 3: 12, 4: 3, 5: 3, 6: 3, 7: 6, 8: 6, 9: 6, 10: 9, 11: 9, 12: 9}[m]
-    year = call_date.year - (1 if qe_month == 12 and m <= 3 else 0)
-    day = 31 if qe_month in (3, 12) else 30
-    return fy_label(dt.date(year, qe_month, day))
+    return periods.quarter_discussed(call_date).label
+
+
+def attach_period(g: dict, call_quarter: str) -> dict:
+    """Store the fiscal period a promise is about next to management's own wording ("Q4" said on the Q3 FY26 call →
+    period "Q4 FY26"); horizon keeps the original words."""
+    p = periods.resolve(g.get("horizon"), call_quarter)
+    g["period"], g["period_kind"] = (p.label, p.kind) if p else (None, None)
+    return g
 
 
 def pick(concalls: list[dict], n: int = 5) -> list[dict]:
@@ -112,7 +116,7 @@ def extract(call: dict, idx: int) -> dict:
             g["speaker"] = who
         g.update({"id": f"G{idx}.{j + 1}", "page": page, "call": call["quarter"], "call_label": call["label"],
                   "url": call["transcript"]})
-        kept.append(g)
+        kept.append(attach_period(g, call["quarter"]))
     focus = []
     for f in raw.get("analyst_focus") or []:
         page = docs.find_quote(doc, f.get("quote") or "", f.get("page"))

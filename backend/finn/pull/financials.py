@@ -81,12 +81,23 @@ def build(symbol: str) -> dict:
     qs = _series(Q, top_line)
     qpat = dict(_series(Q, "Net Profit"))
     qmar = dict(_series(Q, margin_row))
+    qop = dict(_series(Q, op_row))
     for i, (col, rev) in enumerate(qs):
         yoy_col = qs[i - 4][0] if i >= 4 else None
         g = round((rev / qs[i - 4][1] - 1) * 100, 1) if yoy_col and rev and qs[i - 4][1] else None
         pg = round((qpat[col] / qpat[yoy_col] - 1) * 100, 1) if yoy_col and qpat.get(col) and qpat.get(yoy_col) and qpat[yoy_col] > 0 else None
         F.add(f"calc.Q.revenue_yoy.{col}", "Revenue growth YoY", g, "%", col)
         F.add(f"calc.Q.pat_yoy.{col}", "PAT growth YoY", pg, "%", col)
+        # Sequential (quarter-on-quarter) growth, so "sequential growth >10% in Q4" has one fact to cite, and an
+        # exact EBITDA margin — screener's OPM % is rounded to whole numbers. (Not for lenders: no EBITDA there.)
+        if i >= 1:
+            pcol, prev_rev = qs[i - 1]
+            F.add(f"calc.Q.revenue_qoq.{col}", "Revenue growth QoQ (sequential)",
+                  round((rev / prev_rev - 1) * 100, 1) if rev and prev_rev else None, "%", col)
+            F.add(f"calc.Q.pat_qoq.{col}", "PAT growth QoQ (sequential)",
+                  round((qpat[col] / qpat[pcol] - 1) * 100, 1) if qpat.get(col) and qpat.get(pcol) and qpat[pcol] > 0 else None, "%", col)
+        if not lender and rev and qop.get(col) is not None:
+            F.add(f"calc.Q.ebitda_margin.{col}", "EBITDA margin (operating profit ÷ sales)", round(qop[col] / rev * 100, 2), "%", col)
         qrows.append({"period": col, "revenue": rev, "revenue_yoy": g, "margin": qmar.get(col), "pat": qpat.get(col), "pat_yoy": pg})
 
     # Year-to-date growth for the current fiscal year (what full-year guidance is usually tracked against)

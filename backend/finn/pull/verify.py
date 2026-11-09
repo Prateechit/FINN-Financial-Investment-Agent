@@ -5,6 +5,7 @@ reversed ("revenue growth outpacing profit" when profit grew faster). One batche
 judges each claim against only its own cited evidence.
 """
 from ..llm import LLMUnavailable, chat_json
+from . import periods
 
 SYSTEM = """You audit claims in an equity research memo. For each claim you get ONLY the evidence it cites.
 A claim is unsupported if the evidence contradicts it (including reversed comparisons, wrong direction of change,
@@ -13,6 +14,8 @@ contain. Explanations and implications are claims too ("indicating…", "suggest
 are unsupported unless the evidence states them or they follow necessarily from the cited numbers — check the logic
 (e.g. revenue growing faster than profit implies margin compression, not recovery; a target cut that the evidence
 attributes to a reclassification is not evidence of weaker demand). Paraphrase and plain summarising are fine.
+Periods: India's fiscal year runs April–March (Q4 FY26 = Jan–Mar 2026; Q2 FY27 = Jul–Sep 2026). Every figure is
+tagged with its fiscal period; a claim about one period that rests on figures from another period is unsupported.
 Do not use outside knowledge.
 Return JSON: {"checks":[{"id":"<claim id>","supported":true|false,"issue":"if false: max 20 words on what is wrong"}]}"""
 
@@ -22,9 +25,13 @@ def _evidence_text(e: dict) -> str:
     if t == "signal":
         return f"Computed signal: {e.get('text')}"
     if t == "fact" or "value" in e:
-        return f"Reported figure: {e.get('label')} = {e.get('value')} {e.get('unit')} ({e.get('period')})"
+        fiscal = periods.tag(e.get("id", ""), e.get("period"))
+        when = f"{e.get('period')} = {fiscal}" if fiscal else e.get("period")
+        return f"Reported figure: {e.get('label')} = {e.get('value')} {e.get('unit')} ({when})"
     if t == "guidance" or "statement" in e:
-        return f"Management said ({e.get('call')} call): \"{e.get('statement')}\""
+        p = periods.promise_period(e) if e.get("call") else None
+        about = f" about {p.label}" if p else ""
+        return f"Management said ({e.get('call')} call){about}: \"{e.get('statement')}\""
     if t == "analyst":
         return f"An analyst asked: \"{e.get('quote')}\""
     if t == "ledger":
@@ -42,7 +49,10 @@ def claims_for(thesis: dict, ledger: dict) -> list[dict]:
         if r["verdict"] == "unverifiable":
             continue
         ev = [_evidence_text({"type": "guidance", **g}) for g in r["evidence"]] + [_evidence_text({"type": "fact", **f}) for f in r["facts"]]
-        out.append({"id": f"L{i + 1}", "claim": f"Verdict '{r['verdict']}' on '{r['subject']}'. {r['delivered']} {r['why']}", "evidence": ev})
+        p = next((x for x in (periods.promise_period(g) for g in reversed(r["evidence"])) if x), None)
+        period = f" (promise period: {p.label})" if p else ""
+        out.append({"id": f"L{i + 1}", "claim": f"Verdict '{r['verdict']}' on '{r['subject']}'{period}. {r['delivered']} {r['why']}",
+                    "evidence": ev})
     return out
 
 
