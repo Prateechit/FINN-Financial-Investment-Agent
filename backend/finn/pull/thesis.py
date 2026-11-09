@@ -1,4 +1,6 @@
 """Bull vs bear, written only from computed signals, the Promise Ledger and verified transcript quotes."""
+import re
+
 from ..grounding import ungrounded
 from ..llm import chat_json
 from .ledger import compact
@@ -36,9 +38,15 @@ def build(fin: dict, calls: list[dict], ledger: dict) -> dict:
               **{k: {"type": "fact", **v} for k, v in key_facts.items()}}
 
     def clean(p):
+        point = p.get("point", "")
         refs = [r for r in p.get("refs") or [] if r in valid]
-        return {"point": p.get("point", ""), "refs": refs, "evidence": [lookup[r] for r in refs],
-                "grounded": not ungrounded(p.get("point", ""), evidence) and bool(refs)}
+        if not refs:  # some models write "(refs: S1, L2)" into the prose instead of the field
+            refs = [r for r in re.findall(r"[A-Za-z]+[\w.%\- ]*?(?=[,\]\)]|$)", " ".join(re.findall(r"\[([^\]]+)\]", point)))
+                    if r.strip() in valid]
+            refs = [r.strip() for r in refs]
+        point = re.sub(r"\s*\(?refs?:?\s*\[[^\]]*\]\)?", "", point).strip()
+        return {"point": point, "refs": refs, "evidence": [lookup[r] for r in refs],
+                "grounded": not ungrounded(point, evidence) and bool(refs)}
 
     return {"bull": [clean(p) for p in (out.get("bull") or [])[:3]],
             "bear": [clean(p) for p in (out.get("bear") or [])[:3]],

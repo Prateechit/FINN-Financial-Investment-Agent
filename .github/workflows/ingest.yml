@@ -1,0 +1,35 @@
+name: ingest
+
+# Push pipeline on a schedule: EOD prices + new filings → classify → score → enrich.
+# Writes straight to the shared Postgres, so the API host never has to scrape NSE itself.
+on:
+  schedule:
+    - cron: "*/30 3-15 * * 1-5"   # every 30 min, 08:30–21:00 IST, Mon–Fri
+    - cron: "0 13 * * 1-5"        # 18:30 IST — after the EOD price print
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Days of filings to (re)fetch"
+        default: "2"
+
+concurrency: { group: ingest, cancel-in-progress: false }
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: backend/requirements.txt }
+      - run: pip install -r requirements.txt
+      - name: Ingest
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python -m finn.cli all ${{ github.event.inputs.days || '2' }}
+      - name: Keep the API warm
+        if: always()
+        run: curl -fsS --max-time 90 "${{ secrets.API_URL }}/api/health" > /dev/null || true

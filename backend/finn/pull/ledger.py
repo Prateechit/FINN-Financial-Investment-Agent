@@ -101,6 +101,12 @@ def _validate(out: dict, guidance: dict, fact_ids: set, evidence: str):
         if r.get("verdict") not in VERDICTS:
             problems.append(f"row {i + 1} has invalid verdict {r.get('verdict')!r}")
             r["verdict"] = "unverifiable"
+        # A judgement needs evidence: a reported figure, or a later call where management speaks to it.
+        later_calls = {guidance[g]["call"] for g in r["guidance_ids"]}
+        if r["verdict"] in ("delivered", "missed", "on_track", "at_risk") and not r["fact_ids"] and len(later_calls) < 2:
+            r["downgraded_from"] = r["verdict"]
+            r["verdict"] = "unverifiable"
+            r["why"] = "No reported figure or later management statement in the sources tests this promise."
         text = " ".join(str(r.get(k) or "") for k in ("promise", "delivered", "why"))
         if bad := ungrounded(text, evidence):
             problems.append(f"row {i + 1} uses numbers not in GUIDANCE/ACTUALS: {bad[:5]}")

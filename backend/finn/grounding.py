@@ -1,13 +1,14 @@
 """Guards against invented figures: every number in generated prose must exist in the evidence it was given."""
 import re
 
-_NUM = re.compile(r"(?<![A-Za-z])[-+]?\d[\d,]*(?:\.\d+)?")
+_NUM = re.compile(r"(?<![A-Za-z0-9.,])[-+]?\d[\d,]*(?:\.\d+)?")
+_CCY = re.compile(r"\b(?:INR|Rs\.?|USD|US\$)\s*|₹\s*", re.I)
 # Numbers that carry no factual claim: years, quarter/FY labels, list ordinals.
 _IGNORE = re.compile(r"\b(?:FY|Q[1-4]|H[12])\s?'?\d{2,4}\b|\b(?:19|20)\d{2}\b", re.I)
 
 
 def numbers(text: str) -> list[float]:
-    text = _IGNORE.sub(" ", text or "")
+    text = _IGNORE.sub(" ", _CCY.sub(" ", text or ""))
     out = []
     for m in _NUM.finditer(text):
         try:

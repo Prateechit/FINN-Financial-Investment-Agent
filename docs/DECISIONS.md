@@ -32,3 +32,13 @@ A running record of what we verified, what we chose, and why. Dates are IST.
   - Ollama (`gemma3:4b`, local) as the offline dev fallback.
 - **The LLM never produces numbers.** Figures come from XBRL/screener tables computed in code. LLM prose cites fact IDs; a validator rejects any number not in the fact table, and any quote not found verbatim (after whitespace normalisation) on the cited page.
 - **Cache everything by content hash**: PDFs, page text, extractions, LLM responses. Every LLM call is logged to `llm_ledger` (tokens, latency, cache hit) and shown in the app.
+
+## 2026-11-09 — Build-day findings
+
+- **Rules first:** on 11,450 market-wide filings, exchange category + keyword rules classify 90.7% without an LLM. Keyword rules see only the filing's head (subject + opening paragraph); whole-document matching misfired ("customer acquisition" → M&A, "disruptive" → operational disruption).
+- **Positive score adjustments do not stack** (one strong reason escalates); negative ones do. Stacking pushed a routine news clarification to 100.
+- **Penalty sizing:** litigation filings that state a penalty are scored against annual revenue — Bharti Airtel's four DoT notices (₹1–54 lakh) fold automatically.
+- **Results engine:** 19/19 portfolio companies pass PBT − tax ≈ PAT; 18/19 agree with a second source. HDFC Bank's ₹837 Cr PAT gap equals the gap between segment PBT and reported PBT — a screener aggregation difference; FINN shows the exchange figure and flags the disagreement.
+- **Local model test (gemma3 4B):** plumbing works end to end, and it shows why the validators exist — the small model labelled historical results as guidance and marked future-dated capacity promises "delivered". Added: a forward-looking-language filter on guidance, an evidence requirement for verdicts, ref recovery from prose, and a fix to the number parser ("INR48873" was read as 8873).
+- **Prompting:** for long documents the instructions are repeated after the document ("sandwich"); small models otherwise return `{}`.
+- **Never cache an empty LLM answer** — a cached `{}` silently poisoned retries.

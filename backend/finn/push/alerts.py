@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from ..db import Announcement, Company, session
 from ..sources.prices import history
+from .present import title as filing_title
 
 MARKET_CLOSE = dt.time(15, 30)
 
@@ -44,14 +45,21 @@ def eod_moves(symbol: str, settings: dict, days: int = 7) -> list[dict]:
         base = {"symbol": symbol, "date": cur.date.isoformat(), "close": round(cur.close, 2),
                 "ret_pct": round(ret * 100, 2), "sigma": round(z, 1) if z is not None else None,
                 "vol_mult": round(mult, 2) if mult else None, "volume": cur.volume}
-        if abs(ret) * 100 >= pct_th:
-            out.append({**base, "kind": "price", "threshold": pct_th,
-                        "title": f"{symbol} {ret * 100:+.1f}% to ₹{cur.close:,.2f}"
-                                 + (f" · {abs(z):.1f}σ move" if z is not None else "")})
-        if mult and mult >= vol_th:
-            out.append({**base, "kind": "volume", "threshold": vol_th,
-                        "title": f"{symbol} volume {mult:.1f}× its {look}-day average"
-                                 + f" · price {ret * 100:+.1f}%"})
+        price_hit = abs(ret) * 100 >= pct_th
+        vol_hit = bool(mult and mult >= vol_th)
+        if not (price_hit or vol_hit):
+            continue
+        # One line per stock per day: a big move on heavy volume is one event, not two.
+        parts = [f"{ret * 100:+.1f}% to ₹{cur.close:,.2f}" if price_hit else f"volume {mult:.1f}× its {look}-day average"]
+        if price_hit and vol_hit:
+            parts.append(f"on {mult:.1f}× volume")
+        elif vol_hit:
+            parts.append(f"price {ret * 100:+.1f}%")
+        if price_hit and z is not None:
+            parts.append(f"{abs(z):.1f}σ")
+        out.append({**base, "kind": "price" if price_hit else "volume", "both": price_hit and vol_hit,
+                    "threshold": pct_th if price_hit else vol_th, "vol_threshold": vol_th,
+                    "title": f"{symbol} " + " · ".join(parts)})
     return out
 
 
@@ -71,7 +79,7 @@ def compute(settings: dict, days: int = 7) -> list[dict]:
             linked.sort(key=lambda a: -a.materiality)
             if linked:
                 a = linked[0]
-                m["linked"] = {"id": a.id, "category": a.category, "ts": a.ts.isoformat(), "text": a.summary or a.text}
+                m["linked"] = {"id": a.id, "category": a.category, "ts": a.ts.isoformat(), "text": filing_title(a)}
             m["id"] = f"{m['kind']}:{sym}:{m['date']}"
             alerts.append(m)
     cutoff = dt.datetime.now() - dt.timedelta(days=days)
@@ -85,6 +93,6 @@ def compute(settings: dict, days: int = 7) -> list[dict]:
             alerts.append({"id": f"ann:{a.id}", "kind": "announcement", "symbol": a.symbol, "date": a.ts.date().isoformat(),
                            "ts": a.ts.isoformat(), "category": a.category, "materiality": a.materiality,
                            "title": f"{a.symbol} · {a.category.replace('_', ' ')}", "announcement_id": a.id,
-                           "text": a.summary or a.subject or a.text})
+                           "text": filing_title(a)})
     alerts.sort(key=lambda x: (x["date"], x.get("ts", "")), reverse=True)
     return alerts

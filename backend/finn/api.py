@@ -15,6 +15,7 @@ from .llm import available
 from .push import alerts as alerts_mod
 from .push import results
 from .push.enrich import clean_text
+from .push.present import short_title as _title
 from .push.score import tier
 from .pull import research
 from .sources import prices
@@ -44,19 +45,6 @@ def health():
 
 
 # ---------------- push ----------------
-
-def _title(a: Announcement) -> str:
-    e = a.enrichment or {}
-    if a.category == "results" and e.get("status") == "ok":
-        return f"{e['card']['quarter']['label']} results"
-    if a.category == "results" and e.get("status") == "pending":
-        return f"{e['expected_quarter']} results — numbers awaiting exchange XBRL"
-    if a.category == "management_change" and e.get("changes"):
-        c = e["changes"][0]
-        return f"{c.get('person')} — {c.get('change')} as {c.get('role')}"
-    t = a.subject if a.subject and len(clean_text(a.text)) < 80 else (clean_text(a.text) or a.exch_category or "")
-    return t if len(t) <= 140 else t[:137].rsplit(" ", 1)[0] + "…"
-
 
 def _story(group: list[Announcement], names: dict) -> dict:
     group.sort(key=lambda a: (-a.materiality, -(1 if a.enrichment and a.enrichment.get("status") == "ok" else 0), a.ts))
