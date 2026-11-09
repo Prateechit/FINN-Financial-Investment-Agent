@@ -19,7 +19,25 @@ REDACT = [
 ]
 
 
+def _env_secrets() -> list[str]:
+    """Literal values from backend/.env — key formats change, so pattern matching alone is not enough."""
+    env = pathlib.Path(__file__).resolve().parent.parent / "backend" / ".env"
+    vals = []
+    if env.exists():
+        for line in env.read_text(encoding="utf-8").splitlines():
+            if "=" in line and not line.lstrip().startswith("#"):
+                v = line.split("=", 1)[1].split(" #")[0].strip().strip("'\"")
+                if len(v) >= 12:
+                    vals.append(v)
+    return vals
+
+
+SECRETS = _env_secrets()
+
+
 def redact(s: str) -> str:
+    for v in SECRETS:
+        s = s.replace(v, "[REDACTED_SECRET]")
     for rx, rep in REDACT:
         s = rx.sub(rep, s)
     return s

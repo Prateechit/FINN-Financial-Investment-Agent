@@ -42,3 +42,15 @@ A running record of what we verified, what we chose, and why. Dates are IST.
 - **Local model test (gemma3 4B):** plumbing works end to end, and it shows why the validators exist — the small model labelled historical results as guidance and marked future-dated capacity promises "delivered". Added: a forward-looking-language filter on guidance, an evidence requirement for verdicts, ref recovery from prose, and a fix to the number parser ("INR48873" was read as 8873).
 - **Prompting:** for long documents the instructions are repeated after the document ("sandwich"); small models otherwise return `{}`.
 - **Never cache an empty LLM answer** — a cached `{}` silently poisoned retries.
+
+## 2026-11-09 — First real-model run (DIXON, Gemini free tier)
+
+- **Model availability ≠ model list.** `gemini-2.5-flash(-lite)` return 404 for new keys; `pro` has no free quota; `3.7/3.8-flash` and `flash-latest` timed out on every call. Working: `gemini-3.5-flash` (long + reason), `gemini-3.5-flash-lite` (fast, last-resort reason). Router now benches 404s for a day, quota-429s for 10 min, timeouts for 15 min, and retries 503 overloads with back-off.
+- **Robustness bugs found by the real run:** a valid JSON object followed by extra text was rejected (now `raw_decode`); an empty `.env` value overrode defaults; `max_tokens` must cover "thinking" tokens on 3.x models.
+- **Quality review of the ledger, and the fixes it drove:**
+  - The model called FY26 capex "delivered" at ₹1,058 Cr against a ₹1,100–1,200 Cr guide → strictness rule in the prompt **plus a deterministic range check** that overrides lenient verdicts (only for ended horizons, or rate targets mid-horizon — a first version wrongly downgraded a 3–4-year level target).
+  - It skipped open margin promises while margins were falling → coverage rule; "moving against an open promise" = at_risk. The margin-expansion row is now the memo's central finding.
+  - Bull/bear presented an analyst's question as fact → analyst claims must be attributed.
+  - A Q2 PAT −45% on revenue +47% was not in the computed signals → added latest-quarter profit/revenue divergence and YoY margin signals.
+  - Business-segment figures are now number-checked against the transcript (clauses with unverifiable figures are dropped).
+- **Result:** 54/54 guidance quotes verbatim on the cited page (6 are elided "…" quotes, both halves present); 7/7 ledger rows and 6/6 thesis points pass number grounding; a rebuild from cache takes 4 s with 0 tokens.

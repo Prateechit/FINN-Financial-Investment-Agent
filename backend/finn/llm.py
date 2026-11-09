@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import time
 
 import httpx
@@ -24,17 +25,25 @@ PROVIDERS = {
 }
 
 # Ordered candidates per tier. Override any model with env FINN_MODEL_<PROVIDER>_<TIER>.
+# Free-tier availability verified 2026-11-09: gemini-2.5-* returns 404 for new keys; pro models have no free quota;
+# 3.7/3.8-flash and flash-latest timed out on every call. Candidates are tried in order, so newer models can be listed ahead of proven ones.
 TIERS = {
     # short inputs, high volume: classification fallback, one-liners, profile extraction
-    "fast": [("groq", "llama-3.1-8b-instant"), ("gemini", "gemini-2.5-flash-lite"),
+    "fast": [("groq", "llama-3.1-8b-instant"), ("gemini", "gemini-3.5-flash-lite"), ("gemini", "gemini-flash-lite-latest"),
              ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"), ("openai", "gpt-4o-mini"), ("ollama", "gemma3:4b")],
     # whole documents (~20k tokens): transcript guidance extraction
-    "long": [("gemini", "gemini-2.5-flash"), ("gemini", "gemini-2.5-flash-lite"),
-             ("openrouter", "google/gemini-2.0-flash-exp:free"), ("openai", "gpt-4o-mini"), ("ollama", "gemma3:4b")],
+    "long": [("gemini", "gemini-3.5-flash"), ("gemini", "gemini-3.5-flash-lite"),
+             ("openai", "gpt-4o-mini"), ("ollama", "gemma3:4b")],
     # reasoning over extracted JSON: promise-ledger verdicts, bull/bear
-    "reason": [("gemini", "gemini-2.5-flash"), ("groq", "openai/gpt-oss-120b"), ("groq", "llama-3.3-70b-versatile"),
-               ("openrouter", "deepseek/deepseek-chat-v3-0324:free"), ("openai", "gpt-4o-mini"), ("ollama", "gemma3:4b")],
+    "reason": [("gemini", "gemini-3.5-flash"), ("groq", "openai/gpt-oss-120b"), ("groq", "llama-3.3-70b-versatile"), ("openai", "gpt-4o-mini"),
+               ("gemini", "gemini-3.5-flash-lite"),  # last resort: weaker, but the validators still apply
+               ("ollama", "gemma3:4b")],
 }
+EFFORT = {"fast": "low", "long": "low", "reason": "medium"}
+TIMEOUT = {"fast": 40, "long": 120, "reason": 150}
+
+# Models that 404 (retired) are skipped for the process lifetime; quota-exhausted ones for 10 minutes.
+_benched: dict[str, float] = {}
 
 
 class LLMUnavailable(RuntimeError):
@@ -66,7 +75,8 @@ def _parse_json(text: str):
     if m:
         text = m.group(1)
     start = min([i for i in (text.find("{"), text.find("[")) if i >= 0], default=0)
-    return json.loads(text[start:])
+    # raw_decode takes the first complete JSON value and ignores anything a model appends after it
+    return json.JSONDecoder().raw_decode(text[start:])[0]
 
 
 def chat_json(task: str, tier: str, system: str, user: str, max_tokens: int = 2000, temperature: float = 0.1):
@@ -77,6 +87,8 @@ def chat_json(task: str, tier: str, system: str, user: str, max_tokens: int = 20
         if not key:
             continue
         model = os.getenv(f"FINN_MODEL_{provider.upper()}_{tier.upper()}", model)
+        if _benched.get(f"{provider}:{model}", 0) > time.time():
+            continue
         ck = "llm:" + hashlib.sha256(json.dumps([model, system, user]).encode()).hexdigest()
         if hit := kv_get(ck):  # empty answers are never cached
             _log(task=task, provider=provider, model=model, cache_hit=True)
@@ -88,30 +100,47 @@ def chat_json(task: str, tier: str, system: str, user: str, max_tokens: int = 20
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}]}
         if provider != "ollama":
             body["response_format"] = {"type": "json_object"}
-        if provider == "groq" and "gpt-oss" in model:
-            body["reasoning_effort"] = "medium"
-        t0 = time.time()
-        try:
-            for attempt in range(2):
-                r = httpx.post(base + "/chat/completions", json=body, timeout=180,
+        if (provider == "groq" and "gpt-oss" in model) or (provider == "gemini" and "-3" in model):
+            body["reasoning_effort"] = EFFORT[tier]
+        out = None
+        for attempt in range(3):  # retries on the same model for overload (503) or malformed output
+            t0 = time.time()
+            try:
+                r = httpx.post(base + "/chat/completions", json=body, timeout=TIMEOUT[tier],
                                headers={"Authorization": f"Bearer {key}"})
-                if r.status_code == 429 and attempt == 0:
-                    time.sleep(min(float(r.headers.get("retry-after", 8) or 8), 20))
-                    continue
+                if r.status_code == 404:
+                    _benched[f"{provider}:{model}"] = time.time() + 86400
+                elif r.status_code == 429 and "quota" in r.text.lower():
+                    _benched[f"{provider}:{model}"] = time.time() + 600
+                if r.status_code != 200:
+                    raise RuntimeError(f"HTTP {r.status_code}: {r.text[:160]}")
+                data = r.json()
+                choice = data["choices"][0]
+                if choice.get("finish_reason") == "length":
+                    raise RuntimeError(f"truncated at max_tokens={max_tokens}")
+                out = _parse_json(choice["message"].get("content") or "")
+                if not out:
+                    raise RuntimeError("empty JSON")
                 break
-            if r.status_code != 200:
-                raise RuntimeError(f"HTTP {r.status_code}: {r.text[:200]}")
-            data = r.json()
-            content = data["choices"][0]["message"]["content"]
-            out = _parse_json(content)
-        except Exception as e:
+            except httpx.TimeoutException:
+                _benched[f"{provider}:{model}"] = time.time() + 900  # overloaded: stop waiting on it for a while
+                err = f"timeout after {TIMEOUT[tier]}s"
+            except Exception as e:  # noqa: BLE001
+                err = str(e)[:200]
+            out = None
             _log(task=task, provider=provider, model=model, ms=int((time.time() - t0) * 1000), ok=False)
-            errors.append(f"{provider}/{model}: {e}")
+            errors.append(f"{provider}/{model}#{attempt + 1}: {err}")
+            print(f"[llm] {task} {provider}/{model} attempt {attempt + 1} failed: {err}", file=sys.stderr)
+            if _benched.get(f"{provider}:{model}", 0) > time.time() or err.startswith("HTTP 4") and "429" not in err:
+                break
+            if attempt == 1 and "HTTP 503" not in err:
+                break  # malformed output twice: move on; only overload earns a third try
+            time.sleep(5 + 10 * attempt)
+        if out is None:
             continue
         usage = data.get("usage") or {}
         _log(task=task, provider=provider, model=model, ms=int((time.time() - t0) * 1000),
              tokens_in=usage.get("prompt_tokens", 0), tokens_out=usage.get("completion_tokens", 0))
-        if out:
-            kv_set(ck, out)
+        kv_set(ck, out)
         return out
     raise LLMUnavailable(f"no {tier} model succeeded: " + ("; ".join(errors) or "no API key configured"))

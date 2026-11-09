@@ -3,6 +3,7 @@ import datetime as dt
 import re
 from concurrent.futures import ThreadPoolExecutor
 
+from ..grounding import ungrounded
 from ..llm import chat_json
 from ..push.results import fy_label
 from ..sources import docs
@@ -66,7 +67,7 @@ def extract(call: dict, idx: int) -> dict:
     doc = docs.pages(call["transcript"])
     body = "".join(f"\n[[p.{i + 1}]]\n{t}" for i, t in enumerate(doc["pages"]))[:MAX_CHARS]
     raw = chat_json(f"transcript:{call['quarter']}", "long", SYSTEM,
-                    f"Transcript of the earnings call discussing {call['quarter']}:\n{body}", max_tokens=6000)
+                    f"Transcript of the earnings call discussing {call['quarter']}:\n{body}", max_tokens=12000)
     kept, dropped = [], 0
     for j, g in enumerate(raw.get("guidance") or []):
         page = docs.find_quote(doc, g.get("statement") or "", g.get("page"))
@@ -82,7 +83,26 @@ def extract(call: dict, idx: int) -> dict:
         if page:
             focus.append({**f, "page": page, "url": call["transcript"], "call": call["quarter"]})
     return {"call": call["quarter"], "label": call["label"], "url": call["transcript"], "pages": doc["n"],
-            "guidance": kept, "dropped_unverified": dropped, "business": raw.get("business"), "analyst_focus": focus}
+            "guidance": kept, "dropped_unverified": dropped, "business": _grounded_business(raw.get("business"), doc),
+            "analyst_focus": focus}
+
+
+def _strip_unverified(text: str, source: str) -> str:
+    """Drop any clause whose figures do not appear in the transcript."""
+    if not text or not ungrounded(text, source):
+        return text
+    clauses = re.split(r"(?<=[;.])\s+|,\s+(?=[A-Z₹\d])", text)
+    return " ".join(c for c in clauses if not ungrounded(c, source)).strip(" ;,")
+
+
+def _grounded_business(biz: dict | None, doc: dict) -> dict | None:
+    if not biz:
+        return biz
+    source = " ".join(doc["pages"])
+    biz["summary"] = _strip_unverified(biz.get("summary") or "", source)
+    for s in biz.get("segments") or []:
+        s["detail"] = _strip_unverified(s.get("detail") or "", source)
+    return biz
 
 
 def extract_all(concalls: list[dict], n: int = 5) -> list[dict]:

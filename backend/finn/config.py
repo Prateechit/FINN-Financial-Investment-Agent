@@ -6,17 +6,17 @@ from dotenv import load_dotenv
 BACKEND = Path(__file__).resolve().parent.parent
 load_dotenv(BACKEND / ".env")
 
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BACKEND / 'finn.db'}")
+DATABASE_URL = os.getenv("DATABASE_URL") or f"sqlite:///{BACKEND / 'finn.db'}"  # blank counts as unset
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len("postgres://"):]
 elif DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len("postgresql://"):]
 
-CACHE_DIR = Path(os.getenv("FINN_CACHE_DIR", BACKEND / ".cache"))
+CACHE_DIR = Path(os.getenv("FINN_CACHE_DIR") or BACKEND / ".cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 INGEST_TOKEN = os.getenv("FINN_INGEST_TOKEN", "")
-CORS_ORIGINS = [o.strip() for o in os.getenv("FINN_CORS_ORIGINS", "*").split(",")]
+CORS_ORIGINS = [o.strip() for o in (os.getenv("FINN_CORS_ORIGINS") or "*").split(",")]
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")

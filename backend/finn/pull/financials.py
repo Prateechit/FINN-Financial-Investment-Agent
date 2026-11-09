@@ -200,6 +200,20 @@ def _signals(F, traj, qrows, bal, wc, cash, conv5, lender, SH) -> list[dict]:
         elif gs[-1] > gs[0] + 5:
             add("good", f"Revenue growth accelerating: {gs[0]}% YoY ({recent[0]['period']}) → {gs[-1]}% ({recent[-1]['period']}).",
                 [f"calc.Q.revenue_yoy.{recent[0]['period']}", f"calc.Q.revenue_yoy.{recent[-1]['period']}"])
+    if qrows and qrows[-1]["revenue_yoy"] is not None and qrows[-1]["pat_yoy"] is not None:
+        q = qrows[-1]
+        gap = q["pat_yoy"] - q["revenue_yoy"]
+        if abs(gap) >= 20 and (q["pat_yoy"] < 0 or q["revenue_yoy"] < 0 or abs(gap) >= 40):
+            add("bad" if gap < 0 else "good",
+                f"Latest quarter ({q['period']}): revenue {q['revenue_yoy']:+}% YoY but profit {q['pat_yoy']:+}% YoY — "
+                f"{'profit is not keeping up with sales' if gap < 0 else 'profit is outrunning sales'}.",
+                [f"calc.Q.revenue_yoy.{q['period']}", f"calc.Q.pat_yoy.{q['period']}"])
+    if not lender and len(qrows) >= 5 and qrows[-1]["margin"] is not None and qrows[-5]["margin"] is not None:
+        a, b = qrows[-5], qrows[-1]
+        if abs(b["margin"] - a["margin"]) >= 1:
+            add("good" if b["margin"] > a["margin"] else "bad",
+                f"Quarterly operating margin {b['margin']}% ({b['period']}) vs {a['margin']}% a year earlier.",
+                [f"Q.OPM %.{a['period']}", f"Q.OPM %.{b['period']}"])
     if conv5 is not None and not lender:
         tone = "good" if conv5 >= 90 else "bad" if conv5 < 70 else "neutral"
         add(tone, f"Over 5 years, operating cash flow was {conv5}% of reported profit"
