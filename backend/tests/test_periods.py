@@ -131,8 +131,10 @@ def test_dixon_and_hdfcbank_verdicts_unchanged_by_the_new_guards(sym):
         facts = {f["id"]: f for f in row["facts"]}
         guidance = {g["id"]: g for g in row["evidence"]}
         ledger._period_guard(row, guidance, facts, periods.from_calendar(latest))
+        ledger._margin_guard(row, guidance, facts)
         ledger._horizon_guard(row, guidance, latest)
         assert row["verdict"] == original["verdict"], (sym, original["subject"])
+        assert row["fact_ids"] == original["fact_ids"], (sym, original["subject"])
 
 
 def test_missed_uses_resolved_period_for_its_deadline():

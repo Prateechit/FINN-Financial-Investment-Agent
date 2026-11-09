@@ -96,7 +96,7 @@ function LedgerSection({ r, open }: { r: Research; open: (row: LedgerRow) => voi
       <p className="mt-3 px-1 text-[11.5px] leading-relaxed text-ink3">
         ● guided · ▲ raised · ▼ lowered · ◐ softened · ○ not mentioned on that call. Verdicts compare management’s verbatim guidance with reported figures only.
         {dropped > 0 && ` ${dropped} extracted statement${dropped > 1 ? 's were' : ' was'} discarded because the wording couldn’t be found verbatim in the transcript or wasn’t forward-looking.`}
-        {downgraded > 0 && ` ${downgraded} verdict${downgraded > 1 ? 's were' : ' was'} downgraded to “can’t verify” for lack of evidence.`}
+        {downgraded > 0 && ` ${downgraded} model verdict${downgraded > 1 ? 's were' : ' was'} corrected by FINN’s evidence checks.`}
       </p>
     </>
   )
@@ -384,7 +384,7 @@ export default function Memo({ symbol, go }: { symbol: string; go: (r: string) =
           <div className="space-y-4 pb-2">
             <div className="flex items-center gap-2">
               <span className={`rounded-md px-1.5 py-0.5 text-[12px] font-semibold ${VERDICT[row.verdict].cls}`}>{VERDICT[row.verdict].label}</span>
-              {row.downgraded_from && <span className="text-[12px] text-ink3">(model said “{row.downgraded_from}”; no evidence)</span>}
+              {row.downgraded_from && <span className="text-[12px] text-ink3">(model said “{row.downgraded_from}”; corrected by FINN’s evidence check)</span>}
             </div>
             <p className="text-[14px] leading-relaxed">{row.why}</p>
             <div>

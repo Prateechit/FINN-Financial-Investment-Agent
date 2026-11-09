@@ -7,6 +7,8 @@ For every ledger row whose promise names a fiscal period, applies the same rule 
   - a quarter / half-year that has not started can only be "too_early";
   - an ended quarter / half-year must be judged on a figure from inside it;
   - an ended fiscal year judged delivered/missed must cite a figure from that year.
+And the margin-precision rule (backend/finn/pull/ledger._margin_guard): a quarterly margin comparison must not be
+decided on screener's whole-number OPM % — 16% vs 16% can hide 16.03% vs 15.72%.
 Also lists, for information, cited quarters that are neither inside the promise nor its comparison base.
 Memos built before the fix may fail; rebuild them, then re-run. Exits 1 if any row fails.
 """
@@ -29,6 +31,25 @@ def get(api: str, path: str):
         return json.load(r)
 
 
+ROUNDED_MARGIN, EXACT_MARGINS = "Q.OPM %.", ("calc.Q.ebitda_margin.", "X.EBITDA margin.")  # as in ledger.py
+
+
+def rounded_margin_comparison(r: dict) -> str | None:
+    """A judged row comparing two or more quarters' margins with at least one rounded OPM % figure."""
+    if r.get("verdict") not in periods.OUTCOME:
+        return None
+    by_quarter: dict[str, list[str]] = {}
+    for f in r.get("facts", []):
+        if f["id"].startswith((ROUNDED_MARGIN, *EXACT_MARGINS)):
+            p = periods.fact_period(f["id"], f.get("period"))
+            if p and p.kind == "quarter":
+                by_quarter.setdefault(p.label, []).append(f["id"])
+    rounded = [fid for ids in by_quarter.values() for fid in ids if fid.startswith(ROUNDED_MARGIN)]
+    if len(by_quarter) < 2 or not rounded:
+        return None
+    return f"Margin comparison of {', '.join(sorted(by_quarter))} decided on rounded OPM % ({', '.join(rounded)}); exact margins are needed."
+
+
 def audit_memo(memo: dict) -> tuple[int, list[dict]]:
     secs = memo.get("sections") or {}
     q = (secs.get("trajectory") or {}).get("quarterly") or []
@@ -36,6 +57,10 @@ def audit_memo(memo: dict) -> tuple[int, list[dict]]:
     checked, findings = 0, []
     for r in (secs.get("ledger") or {}).get("rows", []):
         promise = periods.latest_promise(r.get("evidence") or [])
+        if margin := rounded_margin_comparison(r):
+            findings.append({"subject": r["subject"], "verdict": r["verdict"], "period": promise.label if promise else "—",
+                             "cited": [f["id"] for f in r.get("facts", [])], "problem": margin, "guarded": False,
+                             "unrelated": []})
         if not promise:
             continue
         checked += 1

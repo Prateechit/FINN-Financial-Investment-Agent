@@ -45,8 +45,9 @@ Rules:
   facts from its own period (plus the quarter before for a sequential promise, or the same quarter a year earlier for
   a year-on-year one) — never with the latest quarter just because it is latest. A quarter or half-year that has not
   started yet is "too_early".
-- Sequential (quarter-on-quarter) promises: cite calc.Q.revenue_qoq / calc.Q.pat_qoq for that quarter. Margin
-  promises: prefer calc.Q.ebitda_margin (exact) over the rounded OPM %.
+- Sequential (quarter-on-quarter) promises: cite calc.Q.revenue_qoq / calc.Q.pat_qoq for that quarter. Quarterly
+  margin promises: cite calc.Q.ebitda_margin (exact, two decimals) for every quarter compared. OPM % is rounded to
+  whole numbers, so two quarters can look tied (16% vs 16%) when they are not — never decide a comparison on it.
 
 Return JSON:
 {"rows":[{"subject":"short label, e.g. 'FY27 revenue growth'","metric":"metric type","promise":"max 18 words: target + horizon",
@@ -98,7 +99,8 @@ def _actuals_text(facts: dict) -> tuple[str, list[str]]:
     raw_keep = ("Sales.", "Revenue.", "OPM %.", "Operating Profit.", "Net Profit.", "Gross NPA %.", "Net NPA %.")
     cands = [fid for fid in facts if fid.startswith(("calc.", "X."))
              and not fid.startswith(("calc.net_worth.", "calc.cfo_pat.", "calc.fcf_5y"))
-             or fid.startswith(("Q.", "A.")) and fid.split(".", 1)[1].startswith(raw_keep)]
+             or fid.startswith(("Q.", "A.")) and fid.split(".", 1)[1].startswith(raw_keep)
+             and not _has_exact_margin(fid, facts)]  # a quarter's rounded OPM % is hidden when its exact margin exists
     family = lambda fid: fid.rsplit(".", 1)[0] if _ordinal(facts[fid]["period"]) is not None else None  # noqa: E731
     latest: dict = {}
     for fid in cands:
@@ -155,6 +157,7 @@ def build(calls: list[dict], facts: dict, latest_quarter: str) -> dict:
             r[k] = readable_ids(r.get(k) or "", facts)
         _metric_guard(r, facts)
         _period_guard(r, guidance, facts, periods.from_calendar(latest_quarter))
+        _margin_guard(r, guidance, facts)
         _range_check(r, guidance, facts)
         _horizon_guard(r, guidance, latest_quarter)
         stances = {t["call"]: t for t in r.get("trajectory") or [] if t.get("call") in call_order}
@@ -237,6 +240,78 @@ def _period_guard(r: dict, guidance: dict, facts: dict, latest: periods.FQ | Non
         r["delivered"] = f"No reported figure for {promise.label} was cited."
     else:
         r["delivered"] = f"{promise.label} has not been reported yet."
+
+
+# Quarterly operating-margin facts. screener's OPM % is rounded to whole numbers, so Q4 FY26 and Q2 FY26 can both read
+# 16% while the exact margins are 16.03% and 15.72%. Exact families, in order of preference: FINN's own operating
+# profit ÷ sales (two decimals), then the company's exchange filing. (Lender margins are a different metric: not here.)
+ROUNDED_MARGIN = "Q.OPM %."
+EXACT_MARGINS = ("calc.Q.ebitda_margin.", "X.EBITDA margin.")
+_RAISE = re.compile(r"\b(exceed\w*|above|improv\w*|expan\w*|higher|increas\w*|better|beat\w*|ahead)\b", re.I)
+_LOWER = re.compile(r"\b(below|declin\w*|lower\w*|reduc\w*|compress\w*|contract\w*|fall\w*|drop\w*)\b", re.I)
+
+
+def _has_exact_margin(fid: str, facts: dict) -> bool:
+    return fid.startswith(ROUNDED_MARGIN) and f"{EXACT_MARGINS[0]}{fid[len(ROUNDED_MARGIN):]}" in facts
+
+
+def margin_quarter(fid: str, period: str | None) -> periods.FQ | None:
+    """Fiscal quarter of a quarterly operating-margin fact (rounded or exact); None for anything else."""
+    if not fid.startswith((ROUNDED_MARGIN, *EXACT_MARGINS)):
+        return None
+    p = periods.fact_period(fid, period)
+    return p.start if p and p.kind == "quarter" else None
+
+
+def _margin_guard(r: dict, guidance: dict, facts: dict) -> None:
+    """Quarterly margin comparisons are decided on exact margins, never on rounded OPM %.
+
+    Cited rounded margins are replaced by one exact family that covers every quarter cited. A comparison (two or more
+    quarters) with no such family is 'unverifiable'. A single-quarter promise to raise the margin above another
+    quarter's level ("exceed the Q2 run-rate", "sequential improvement") is then decided in code from the exact pair.
+    """
+    cited = {fid: q for fid in r["fact_ids"] if (q := margin_quarter(fid, facts[fid]["period"]))}
+    if not cited:
+        return
+    quarters = sorted(set(cited.values()))
+    families = [{q: fid for fid, f in facts.items() if fid.startswith(prefix)
+                 and (q := margin_quarter(fid, f["period"])) in quarters} for prefix in EXACT_MARGINS]
+    exact = next((ids for ids in families if len(ids) == len(quarters)), None)
+    if exact:
+        swapped = list(dict.fromkeys(exact[cited[fid]] if fid in cited else fid for fid in r["fact_ids"]))
+        if replaced := [fid for fid in r["fact_ids"] if fid not in swapped]:
+            r["replaced_fact_ids"] = replaced
+        r["fact_ids"] = swapped
+    if len(quarters) < 2 or r["verdict"] not in periods.OUTCOME:
+        return
+    if not exact:
+        one = {}
+        for fid, q in cited.items():
+            one.setdefault(q, fid)
+        shown = " vs ".join(f"{fmt(facts[fid]['value'], '%')} in {q.label}" for q, fid in one.items())
+        r["downgraded_from"], r["verdict"] = r["verdict"], "unverifiable"
+        r["why"] = f"Only rounded margins are available ({shown}), and they can't settle a margin comparison."
+        r["delivered"] = "No exact margin figure in the sources for the quarters compared."
+        r["margin_check"] = {"result": "rounded_only", "quarters": [q.label for q in quarters]}
+        return
+    promise = _promise(r, guidance)
+    if not promise or promise.kind != "quarter" or len(quarters) != 2 or promise.start not in exact:
+        return
+    said = " ".join(str(x or "") for x in (r.get("subject"), r.get("promise"),
+                                            *(guidance[g].get("target") for g in r["guidance_ids"] if g in guidance)))
+    if not _RAISE.search(said) or _LOWER.search(said):  # only "raise above that level" promises are decided here
+        return
+    base_q = next(q for q in quarters if q != promise.start)
+    t, b = facts[exact[promise.start]], facts[exact[base_q]]
+    above = t["value"] > b["value"]
+    r["margin_check"] = {"result": "above" if above else "not_above", "target": {"period": promise.label, "value": t["value"], "fact": t["id"]},
+                         "base": {"period": base_q.label, "value": b["value"], "fact": b["id"]}}
+    verdict = "delivered" if above else "missed"
+    if verdict != r["verdict"]:
+        r["downgraded_from"], r["verdict"] = r["verdict"], verdict
+        r["why"] = (f"Exact EBITDA margin: {fmt(t['value'], '%')} in {promise.label} vs {fmt(b['value'], '%')} in "
+                    f"{base_q.label} — {'above' if above else 'not above'} the {base_q.label} level.")
+        r["delivered"] = f"EBITDA margin {fmt(t['value'], '%')} in {promise.label} ({fmt(b['value'], '%')} in {base_q.label})."
 
 
 def _horizon_guard(r: dict, guidance: dict, latest_quarter: str) -> None:
