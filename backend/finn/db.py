@@ -3,6 +3,7 @@ import json
 from contextlib import contextmanager
 
 from sqlalchemy import (JSON, Boolean, Date, DateTime, Float, Integer, String, Text, create_engine, select)
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from .config import DATABASE_URL, DEFAULT_SETTINGS
@@ -118,8 +119,15 @@ def kv_get(key: str, max_age: dt.timedelta | None = None):
 
 
 def kv_set(key: str, value) -> None:
-    with session() as s:
-        s.merge(KV(key=key, value=json.dumps(value, default=str), updated_at=now()))
+    payload = json.dumps(value, default=str)
+    for attempt in range(3):  # merge is select-then-insert; two threads writing one key can race
+        try:
+            with session() as s:
+                s.merge(KV(key=key, value=payload, updated_at=now()))
+            return
+        except IntegrityError:
+            if attempt == 2:
+                raise
 
 
 def get_settings() -> dict:

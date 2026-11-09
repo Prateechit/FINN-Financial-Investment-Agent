@@ -26,7 +26,7 @@ def main(argv: list[str]):
     elif cmd == "reprocess":
         print(ingest.reprocess(use_llm="--no-llm" not in argv), ingest.enrich_pending())
     elif cmd == "enrich":
-        print(ingest.enrich_pending())
+        print(ingest.enrich_pending(retry_now="--retry" in argv))
     elif cmd == "research":
         from .pull import research
         for sym in argv[1:]:

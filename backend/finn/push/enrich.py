@@ -40,6 +40,8 @@ def enrich_results(a) -> dict:
     return {"type": "results", "status": "ok", "card": card}
 
 
+_FIRM = re.compile(r"\b(LLP|Chartered Accountants|& Co\b|& Associates|Associates LLP|Limited|Ltd\.?)\b", re.I)
+
 MGMT_SYSTEM = """You extract management changes from an Indian listed company's exchange filing.
 Use ONLY the filing text. Never add outside knowledge. Copy the profile wording from the filing.
 Return JSON:
@@ -66,10 +68,14 @@ def enrich_management(a) -> dict:
         surname = docs.norm(name.split()[-1]) if name else ""
         if not surname or surname not in flat:  # reject names the filing does not contain
             continue
+        if _FIRM.search(name):  # auditor / firm appointments are not management changes
+            continue
         prof = c.get("profile")
         page = docs.find_quote(doc, prof[:160]) if prof else None
         c["profile_verified"] = page is not None
         c["page"] = page
+        if page is None:  # only a profile found verbatim in the filing (and highlights drawn from it) is shown
+            c["profile"], c["highlights"] = None, []
         changes.append(c)
     return {"type": "management_change", "status": "ok" if changes else "empty", "changes": changes,
             "source": {"url": a.pdf_url, "pages": doc["n"]}}

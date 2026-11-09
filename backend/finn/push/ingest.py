@@ -111,7 +111,7 @@ def ingest_announcements(days: int = 3, symbols: list[str] | None = None, use_ll
     return stats
 
 
-def enrich_pending(limit: int = 250, use_llm: bool = True) -> int:
+def enrich_pending(limit: int = 250, use_llm: bool = True, retry_now: bool = False) -> int:
     """Enrich material announcements that have no enrichment yet, or whose results numbers were pending."""
     with session() as s:
         cands = list(s.scalars(select(Announcement).where(Announcement.materiality >= 45)
@@ -120,7 +120,7 @@ def enrich_pending(limit: int = 250, use_llm: bool = True) -> int:
     for a in cands:
         e = a.enrichment or {}
         needs = (a.enriched_at is None or e.get("status") in ("pending", "llm_unavailable", "fallback")
-                 and (now() - a.enriched_at) > dt.timedelta(minutes=30))
+                 and (retry_now or (now() - a.enriched_at) > dt.timedelta(minutes=30)))
         if not needs or (not use_llm and a.category != "results"):
             continue
         try:

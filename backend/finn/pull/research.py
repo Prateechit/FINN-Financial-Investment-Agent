@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 
 from ..db import LLMCall, kv_get, kv_set, now, session
 from ..llm import LLMUnavailable, available
+from ..push import results
 from . import financials, ledger, thesis, transcripts
 
 _running: set[str] = set()
@@ -45,6 +46,26 @@ def _usage(since: dt.datetime) -> dict:
     return out
 
 
+def _add_results_facts(sym: str, fin: dict) -> None:
+    """Exact exchange-XBRL quarter figures (NII, pre-provision profit, provisions for lenders; EBITDA otherwise)."""
+    try:
+        card = results.results_card(sym)
+    except Exception:  # noqa: BLE001 — the memo stands without them
+        return
+    if not card or card["source"] != "NSE XBRL":
+        return
+    q, url = card["quarter"]["label"], card["links"][0]
+    add = lambda fid, label, v, unit, period: v is not None and fin["facts"].__setitem__(fid, {  # noqa: E731
+        "id": fid, "label": label, "value": v, "unit": unit, "period": period, "source": "NSE exchange XBRL", "url": url})
+    for r in card["rows"]:
+        add(f"X.{r['key']}.{q}", f"{r['label']} (exchange filing)", r["cur"], "₹ Cr", q)
+        add(f"X.{r['key']}.{card['yoy_label']}", f"{r['label']} (exchange filing)", r["yoy"], "₹ Cr", card["yoy_label"])
+        add(f"X.{r['key']}_yoy.{q}", f"{r['label']} growth YoY (exchange filing)", r["yoy_pct"], "%", q)
+    for m in card["margins"]:
+        add(f"X.{m['label']}.{q}", f"{m['label']} (exchange filing)", m["cur"], "%", q)
+        add(f"X.{m['label']}.{card['yoy_label']}", f"{m['label']} (exchange filing)", m["yoy"], "%", card["yoy_label"])
+
+
 def build(sym: str, force: bool = False) -> dict:
     sym = sym.upper().strip()
     prev = get(sym)
@@ -67,6 +88,7 @@ def build(sym: str, force: bool = False) -> dict:
     except Exception as e:  # noqa: BLE001
         save(status="error", stage="", errors=[f"Could not load financial statements for {sym}: {e}"])
         return state
+    _add_results_facts(sym, fin)
     secs = state["sections"]
     secs.update({k: fin[k] for k in ("snapshot", "trajectory", "balance_sheet", "cash", "signals")})
     state["facts"] = fin["facts"]

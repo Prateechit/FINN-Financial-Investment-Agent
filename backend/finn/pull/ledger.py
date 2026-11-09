@@ -35,6 +35,9 @@ Rules:
 - Coverage: include every distinct company-level promise on revenue/growth, margins and profit, plus capex and the
   largest segment promises — including open ones, so the investor sees what is still outstanding. 6–8 rows when the
   guidance supports it, most material first. Margin promises must be compared with the reported margin facts.
+- No proxies: judge a promise only with a fact that measures the same thing (NIM ≠ PAT margin, ROA ≠ profit,
+  credit-deposit ratio ≠ debt/equity, balance-sheet growth ≠ revenue growth). If no such fact exists the verdict is
+  "unverifiable" — say which figure is missing. Facts marked "(exchange filing)" are the company's own XBRL figures.
 
 Return JSON:
 {"rows":[{"subject":"short label, e.g. 'FY27 revenue growth'","metric":"metric type","promise":"max 18 words: target + horizon",
@@ -70,7 +73,7 @@ def fmt(v: float, unit: str) -> str:
 def _actuals_text(facts: dict) -> tuple[str, list[str]]:
     keep = []
     for fid, f in facts.items():
-        if fid.startswith(("calc.", "Q.", "A.")) and not fid.startswith(("Q.Other", "A.Other", "A.EPS", "A.Interest", "A.Depreciation")):
+        if fid.startswith(("calc.", "Q.", "A.", "X.")) and not fid.startswith(("Q.Other", "A.Other", "A.EPS", "A.Interest", "A.Depreciation")):
             keep.append(fid)
     # Most recent periods matter most; cap the prompt size.
     keep = keep[-260:]
@@ -108,12 +111,16 @@ def build(calls: list[dict], facts: dict, latest_quarter: str) -> dict:
     for r in rows:
         for k in ("promise", "delivered", "why"):
             r[k] = readable_ids(r.get(k) or "", facts)
+        _metric_guard(r, facts)
         _range_check(r, guidance, facts)
         stances = {t["call"]: t for t in r.get("trajectory") or [] if t.get("call") in call_order}
         r["timeline"] = [{"call": c, **({"stance": stances[c]["stance"], "guidance_id": stances[c].get("guidance_id")}
                                          if c in stances else {"stance": "silent"})} for c in call_order]
         r["evidence"] = [guidance[g] for g in r["guidance_ids"]]
         r["facts"] = [facts[f] for f in r["fact_ids"]]
+    # What needs attention first: broken or shifting promises, then kept ones, then what can't be judged yet.
+    order = ["missed", "at_risk", "goalposts_moved", "dropped", "delivered", "on_track", "too_early", "unverifiable"]
+    rows.sort(key=lambda r: order.index(r["verdict"]))
     counts = {v: sum(1 for r in rows if r["verdict"] == v) for v in VERDICTS}
     return {"status": "ok", "rows": rows, "credibility": out.get("credibility"), "counts": counts, "calls": call_order,
             "warnings": problems}
@@ -151,6 +158,34 @@ def _validate(out: dict, guidance: dict, fact_ids: set, evidence: str):
 
 _UNIT = {"Cr": "₹ Cr", "%": "%"}
 
+# Metrics that are often guided but easy to "judge" with a look-alike number. A row about one of these may only be
+# judged with a fact that measures it; otherwise it is unverifiable. (pattern in promise → pattern a fact id must match)
+_METRIC_GUARDS = [
+    (r"\bnim\b|net interest margin", r"\bnim\b|net interest margin", "net interest margin"),
+    (r"\bcasa\b", r"casa", "CASA ratio"),
+    (r"\blcr\b|liquidity coverage", r"lcr", "liquidity coverage ratio"),
+    (r"credit[- ]deposit|\bldr\b|loan[- ]to[- ]deposit", r"credit_deposit|ldr", "credit-deposit ratio"),
+    (r"\broa\b|return on (average )?assets?", r"calc\.roa", "return on assets"),
+    (r"balance[- ]sheet growth", r"calc\.asset_growth", "balance-sheet growth"),
+    (r"cost[- ]to[- ]income|cost[- ]to[- ]earnings", r"cost_income", "cost-to-income ratio"),
+    (r"\bgnpa\b|gross npa|asset quality", r"npa", "NPA ratio"),
+]
+
+
+def _metric_guard(r: dict, facts: dict) -> None:
+    text = f"{r.get('subject')} {r.get('promise')}".lower()
+    for promise_rx, fact_rx, name in _METRIC_GUARDS:
+        if re.search(promise_rx, text):
+            if not any(re.search(fact_rx, f"{fid} {facts[fid]['label']}", re.I) for fid in r["fact_ids"]):
+                if r["verdict"] not in ("unverifiable", "goalposts_moved", "dropped"):
+                    r["downgraded_from"] = r["verdict"]
+                    r["verdict"] = "unverifiable"
+                    r["why"] = (f"The sources give no {name} figure, so this promise can't be judged; "
+                                f"FINN does not substitute a different metric.")
+                    r["delivered"] = f"No reported {name} in the filings used."
+                    r["fact_ids"] = []
+            return
+
 
 def _range_check(r: dict, guidance: dict, facts: dict) -> None:
     """Compare the cited actual with the guided numeric range in code; override a lenient verdict.
@@ -182,4 +217,4 @@ def _range_check(r: dict, guidance: dict, facts: dict) -> None:
 def compact(ledger: dict) -> str:
     """Short text form for downstream prompts."""
     return json.dumps([{"id": f"L{i + 1}", "subject": r["subject"], "verdict": r["verdict"], "why": r.get("why")}
-                       for i, r in enumerate(ledger.get("rows", []))])
+                       for i, r in enumerate(ledger.get("rows", []))], ensure_ascii=False)  # "₹" must stay parseable

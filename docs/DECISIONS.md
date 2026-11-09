@@ -54,3 +54,13 @@ A running record of what we verified, what we chose, and why. Dates are IST.
   - A Q2 PAT −45% on revenue +47% was not in the computed signals → added latest-quarter profit/revenue divergence and YoY margin signals.
   - Business-segment figures are now number-checked against the transcript (clauses with unverifiable figures are dropped).
 - **Result:** 54/54 guidance quotes verbatim on the cited page (6 are elided "…" quotes, both halves present); 7/7 ledger rows and 6/6 thesis points pass number grounding; a rebuild from cache takes 4 s with 0 tokens.
+
+## 2026-11-09 — Second company (HDFC Bank) + push/frontend integration
+
+- **Free-tier reality:** Gemini gives ~20 requests/day *per model* and ~15/minute. DIXON's runs exhausted `gemini-3.5-flash` for the day, so HDFC Bank ran on the fallbacks — a useful test of degraded mode. Router changes: cache is checked across *all* candidate models before any call (a benched model's cached answer is still valid); per-model pacing (≤13/min); quota 429s bench a model until the server's `retryDelay`, shared across processes via the DB; brief per-minute limits are waited out (≤90 s) instead of failing; more models per tier (`3.1-flash-lite`, `3-flash-preview`) to spread daily quota.
+- **Bank-format bug (critical, now fixed):** screener's "Financing Margin %" (negative for banks) was still in the fact table, so the model concluded "NIMs are declining" from a meaningless number. Fixed by excluding it for lenders, adding exchange-XBRL quarter facts for every company (NII, PPOP, provisions, PAT; EBITDA for others), lender ratios (ROA, total-asset growth, deposit growth) and dropping CFO/PAT for lenders (bank cash flow is deposit/loan movement).
+- **No-proxy guard:** the model judged NIM with PAT margin, ROA with absolute profit, credit-deposit ratio with debt/equity. A prompt rule helped but was not enough on a weaker model, so a deterministic metric guard now forces "can't verify" unless a cited fact measures the promised metric.
+- **Step-change detection:** total assets +59% in FY24 (HDFC Ltd merger). Growth rates spanning it are labelled "likely inorganic", and any thesis point citing them gets the caveat appended in code.
+- **Grounding false-negative:** the ledger summary passed to the thesis used `json.dumps` with ASCII escaping, so "₹6,700" became `₹6,700` and correct numbers were flagged as unverified. Fixed + regression test.
+- **Management profiles:** shown only when found verbatim in the filing; firms (auditors) are not management changes; NSE's "-" attachment placeholder is normalised.
+- **Integration:** `scripts/smoke_test.py` (36 end-to-end checks through the frontend proxy) and `backend/tests/test_guards.py` (28 unit tests of the deterministic layer) both pass.

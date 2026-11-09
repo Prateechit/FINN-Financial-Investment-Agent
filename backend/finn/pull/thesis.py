@@ -25,7 +25,7 @@ def build(fin: dict, calls: list[dict], ledger: dict) -> dict:
     latest = next((c for c in calls if c.get("guidance")), None)
     guid = {g["id"]: g for g in (latest or {}).get("guidance", [])}
     led = {f"L{i + 1}": r for i, r in enumerate(ledger.get("rows", []))}
-    key_facts = {k: v for k, v in fin["facts"].items() if k.startswith("calc.") and not k.startswith("calc.Q.")}
+    key_facts = {k: v for k, v in fin["facts"].items() if k.startswith(("calc.", "X.")) and not k.startswith("calc.Q.")}
     ev = ["SIGNALS:"] + [f"{k}: [{s['tone']}] {s['text']}" for k, s in sig.items()]
     ev += ["PROMISE LEDGER:", compact(ledger)]
     ev += ["LATEST GUIDANCE:"] + [f"{k}: {g.get('subject')} — {g.get('target')} ({g.get('horizon')}): \"{g['statement']}\"" for k, g in guid.items()]
@@ -46,7 +46,21 @@ def build(fin: dict, calls: list[dict], ledger: dict) -> dict:
             refs = [r for r in re.findall(r"[A-Za-z]+[\w.%\- ]*?(?=[,\]\)]|$)", " ".join(re.findall(r"\[([^\]]+)\]", point)))
                     if r.strip() in valid]
             refs = [r.strip() for r in refs]
+        # inline tags like "(S2)" or "(L1, calc.cfo_pat_5y)": harvest as refs if the field was empty, then remove
+        inline = re.findall(r"\(((?:[SLGA]\d+(?:\.\d+)?|calc\.[^,()]+|X\.[^,()]+)(?:,\s*(?:[SLGA]\d+(?:\.\d+)?|calc\.[^,()]+|X\.[^,()]+))*)\)", point)
+        for group in inline:
+            refs += [x.strip() for x in group.split(",") if x.strip() in valid and x.strip() not in refs]
+        point = re.sub(r"\s*\((?:[SLGA]\d+(?:\.\d+)?|calc\.[^,()]+|X\.[^,()]+)(?:,\s*(?:[SLGA]\d+(?:\.\d+)?|calc\.[^,()]+|X\.[^,()]+))*\)", "", point)
         point = readable_ids(re.sub(r"\s*\(?refs?:?\s*\[[^\]]*\]\)?", "", point).strip(), fin["facts"])
+        # Something only an analyst said is a claim; if the sentence doesn't attribute it, attribute it.
+        if any(r.startswith("A") and r[1:].isdigit() for r in refs) and not re.search(r"analyst", point, re.I):
+            point = point.rstrip(".") + " (raised by analysts on the call)."
+        # A caveat carried by a cited figure must survive into the sentence, whatever the model wrote.
+        for r in refs:
+            label = str(lookup[r].get("label", ""))
+            if "likely inorganic" in label and not re.search(r"merger|inorganic|acqui|step", point, re.I):
+                point = point.rstrip(".") + f" — {label[label.index('(') + 1:].rstrip(')')}."
+                break
         return {"point": point, "refs": refs, "evidence": [lookup[r] for r in refs],
                 "grounded": not ungrounded(point, evidence) and bool(refs)}
 

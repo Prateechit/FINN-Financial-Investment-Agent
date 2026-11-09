@@ -61,7 +61,7 @@ def announcements(symbol: str, frm: dt.date, to: dt.date) -> list[dict]:
             "ts": dt.datetime.strptime(r["sort_date"], "%Y-%m-%d %H:%M:%S"),
             "exch_category": (r.get("desc") or "").strip(),
             "text": (r.get("attchmntText") or "").strip(),
-            "pdf_url": r.get("attchmntFile") or None,
+            "pdf_url": r["attchmntFile"] if str(r.get("attchmntFile") or "").startswith("http") else None,  # NSE uses "-"
         })
     return out
 

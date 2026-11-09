@@ -177,7 +177,7 @@ export default function Memo({ symbol, go }: { symbol: string; go: (r: string) =
             <h1 className="font-serif text-[28px] leading-tight">{snap.name}</h1>
             <div className="mt-0.5 text-[13px] text-ink2">{snap.sector} · {snap.basis} · {snap.price}</div>
             <div className="num mt-3 grid grid-cols-4 gap-1.5 text-center">
-              {[['Mkt cap', snap.market_cap?.replace('₹ ', '₹').replace(' Cr.', ' Cr')], ['P/E', snap.pe], [snap.lender ? 'ROE' : 'ROCE', snap.lender ? snap.roe : snap.roce], ['Div yield', snap.dividend_yield]].map(([k, v]) => (
+              {[['Mkt cap', snap.market_cap ? `₹${crore(Number(snap.market_cap.replace(/[^\d.]/g, '')))}` : undefined], ['P/E', snap.pe], [snap.lender ? 'ROE' : 'ROCE', snap.lender ? snap.roe : snap.roce], ['Div yield', snap.dividend_yield]].map(([k, v]) => (
                 <div key={k} className="rounded-lg bg-card px-1 py-2 ring-1 ring-line">
                   <div className="truncate text-[13px] font-semibold">{v ?? '—'}</div>
                   <div className="text-[10.5px] text-ink3">{k}</div>

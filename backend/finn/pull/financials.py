@@ -49,8 +49,11 @@ def build(symbol: str) -> dict:
     op_row, margin_row = ("Financing Profit", "Financing Margin %") if lender else ("Operating Profit", "OPM %")
 
     # ---- register facts ----
-    for tbl, prefix, rows in [(A, "A", [top_line, op_row, margin_row, "Net Profit", "Interest", "Depreciation", "Other Income", "Profit before tax", "EPS in Rs", "Dividend Payout %"]),
-                              (Q, "Q", [top_line, op_row, margin_row, "Net Profit", "Profit before tax", "Other Income", "Gross NPA %", "Net NPA %"]),
+    # screener's "Financing Profit / Margin %" for banks nets provisions and opex against revenue and comes out
+    # negative — it is not NIM, so it must never reach a model as evidence about margins.
+    op_rows = [] if lender else [op_row, margin_row]
+    for tbl, prefix, rows in [(A, "A", [top_line, *op_rows, "Net Profit", "Interest", "Depreciation", "Other Income", "Profit before tax", "EPS in Rs", "Dividend Payout %"]),
+                              (Q, "Q", [top_line, *op_rows, "Net Profit", "Profit before tax", "Other Income", "Gross NPA %", "Net NPA %"]),
                               (B, "B", ["Equity Capital", "Reserves", "Borrowings", "Borrowing", "Deposits", "Total Liabilities", "Fixed Assets", "CWIP", "Investments", "Other Assets"]),
                               (CF, "CF", ["Cash from Operating Activity", "Cash from Investing Activity", "Cash from Financing Activity", "Free Cash Flow"]),
                               (R, "R", ["Debtor Days", "Inventory Days", "Days Payable", "Cash Conversion Cycle", "Working Capital Days", "ROCE %", "ROE %"]),
@@ -103,7 +106,7 @@ def build(symbol: str) -> dict:
                 ytd = {"label": label, "revenue": round(s1, 1), "prior": round(s0, 1), "growth": round((s1 / s0 - 1) * 100, 1)}
                 F.add("calc.ytd_revenue_growth", f"Revenue growth {label} vs prior-year period", ytd["growth"], "%", label)
                 m_cur = [qmar.get(col) for col, _ in cur if qmar.get(col) is not None]
-                if m_cur:
+                if m_cur and not lender:
                     F.add("calc.ytd_margin", f"Average {margin_row} {label}", round(sum(m_cur) / len(m_cur), 1), "%", label)
 
     # ---- balance sheet ----
@@ -118,6 +121,24 @@ def build(symbol: str) -> dict:
         F.add(f"calc.de.{col}", "Debt / equity", de, "x", col)
         bal.append({"period": col, "net_worth": round(nw, 1), "debt": debt, "de": de,
                     "deposits": dict(_series(B, "Deposits")).get(col)})
+    step_change = None
+    if lender:  # the ratios a lender's guidance is actually about
+        assets = [(c, v) for c, v in _series(B, "Total Assets") if c.startswith("Mar") and v]
+        deps = dict(_series(B, "Deposits"))
+        for (c0, a0), (c1, a1) in zip(assets, assets[1:]):
+            F.add(f"calc.asset_growth.{c1}", "Balance-sheet (total assets) growth", round((a1 / a0 - 1) * 100, 1), "%", _fy(c1))
+            if pat.get(c1):
+                F.add(f"calc.roa.{c1}", "Return on average assets", round(pat[c1] / ((a0 + a1) / 2) * 100, 2), "%", _fy(c1))
+            if deps.get(c0) and deps.get(c1):
+                F.add(f"calc.deposit_growth.{c1}", "Deposit growth", round((deps[c1] / deps[c0] - 1) * 100, 1), "%", _fy(c1))
+            # A one-year jump this size is a merger or acquisition; growth rates spanning it are not organic.
+            if a1 / a0 - 1 > 0.4:
+                year = int(c1[-4:])
+                for fid, f in F.items.items():
+                    m = re.match(r"FY(\d{2})–FY(\d{2})", f["period"])
+                    if fid.startswith("calc.") and "cagr" in fid and m and 2000 + int(m.group(1)) < year <= 2000 + int(m.group(2)):
+                        f["label"] += f" (spans the {_fy(c1)} step-change: assets +{(a1 / a0 - 1) * 100:.0f}%, likely inorganic)"
+                step_change = (c1, round((a1 / a0 - 1) * 100))
     wc = []
     for col, d in _series(R, "Debtor Days"):
         wc.append({"period": col, "debtor_days": d, "inventory_days": dict(_series(R, "Inventory Days")).get(col),
@@ -132,12 +153,13 @@ def build(symbol: str) -> dict:
         p = pat.get(col)
         capex = round(cfo - fcf, 1) if cfo is not None and fcf is not None else None
         conv = round(cfo / p * 100) if cfo is not None and p and p > 0 else None
-        F.add(f"calc.capex.{col}", "Capex (CFO − FCF)", capex, "₹ Cr", col)
-        F.add(f"calc.cfo_pat.{col}", "CFO / PAT", conv, "%", col)
+        if not lender:  # a bank's operating cash flow is mostly deposit and loan movement — not earnings quality
+            F.add(f"calc.capex.{col}", "Capex (CFO − FCF)", capex, "₹ Cr", col)
+            F.add(f"calc.cfo_pat.{col}", "CFO / PAT", conv, "%", col)
         cash.append({"period": col, "cfo": cfo, "fcf": fcf, "capex": capex, "pat": p, "cfo_pat": conv})
     last5 = cash[-5:]
     conv5 = None
-    if last5 and all(x["cfo"] is not None and x["pat"] for x in last5):
+    if last5 and not lender and all(x["cfo"] is not None and x["pat"] for x in last5):
         conv5 = round(sum(x["cfo"] for x in last5) / sum(x["pat"] for x in last5) * 100)
         F.add("calc.cfo_pat_5y", "Cumulative 5y CFO / PAT", conv5, "%", f"{last5[0]['period']}–{last5[-1]['period']}")
         F.add("calc.fcf_5y", "Cumulative 5y free cash flow", round(sum(x["fcf"] or 0 for x in last5), 1), "₹ Cr",
@@ -147,6 +169,10 @@ def build(symbol: str) -> dict:
         for r in traj_rows + qrows:
             r["margin"] = round(r["pat"] / r["revenue"] * 100, 1) if r.get("pat") is not None and r.get("revenue") else None
     signals = _signals(F, traj_rows, qrows, bal, wc, cash, conv5, lender, SH)
+    if step_change:
+        signals.insert(0, {"tone": "neutral", "facts": [f"calc.asset_growth.{step_change[0]}"],
+                           "text": f"Total assets grew {step_change[1]}% in {_fy(step_change[0])} — a step-change (merger or "
+                                   f"acquisition), so multi-year growth rates spanning it overstate organic growth."})
     top = c["top"]
     snapshot = {
         "name": c["name"], "symbol": symbol, "sector": c["sector"], "basis": c["basis"], "lender": lender,
