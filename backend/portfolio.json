@@ -1,0 +1,25 @@
+{
+  "name": "FINN demo portfolio",
+  "note": "Mock weights (% of portfolio value). Mix of sectors, market caps and reporting formats (industrial, bank, NBFC).",
+  "holdings": [
+    {"symbol": "RELIANCE", "weight": 9.0, "sector": "Conglomerate"},
+    {"symbol": "HDFCBANK", "weight": 9.0, "sector": "Private bank"},
+    {"symbol": "INFY", "weight": 7.0, "sector": "IT services"},
+    {"symbol": "BHARTIARTL", "weight": 7.0, "sector": "Telecom"},
+    {"symbol": "LT", "weight": 6.5, "sector": "Engineering & construction"},
+    {"symbol": "BAJFINANCE", "weight": 6.0, "sector": "NBFC"},
+    {"symbol": "SUNPHARMA", "weight": 5.5, "sector": "Pharma"},
+    {"symbol": "MARUTI", "weight": 5.5, "sector": "Autos"},
+    {"symbol": "TITAN", "weight": 5.0, "sector": "Consumer discretionary"},
+    {"symbol": "ASIANPAINT", "weight": 4.5, "sector": "Paints"},
+    {"symbol": "HAL", "weight": 5.0, "sector": "Defence"},
+    {"symbol": "TRENT", "weight": 4.5, "sector": "Retail"},
+    {"symbol": "DIXON", "weight": 4.0, "sector": "Electronics manufacturing"},
+    {"symbol": "POLYCAB", "weight": 4.0, "sector": "Cables & wires"},
+    {"symbol": "PERSISTENT", "weight": 4.0, "sector": "IT services"},
+    {"symbol": "IRCTC", "weight": 3.0, "sector": "Travel & tourism"},
+    {"symbol": "DEEPAKNTR", "weight": 3.0, "sector": "Chemicals"},
+    {"symbol": "PAYTM", "weight": 3.0, "sector": "Fintech"},
+    {"symbol": "SUZLON", "weight": 4.5, "sector": "Wind energy"}
+  ]
+}
