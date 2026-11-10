@@ -100,32 +100,58 @@ def extract(call: dict, idx: int) -> dict:
     body = "".join(f"\n[[p.{i + 1}]]\n{t}" for i, t in enumerate(doc["pages"]))[:MAX_CHARS]
     raw = chat_json(f"transcript:{call['quarter']}", "long", SYSTEM,
                     f"Transcript of the earnings call discussing {call['quarter']}:\n{body}", max_tokens=12000)
+    # A model's JSON can be the wrong shape — a bare list of items, a string where an object belongs. Wrong-shaped
+    # parts are skipped (and recorded); they must not lose the transcript's other, well-formed items.
+    if isinstance(raw, list):
+        raw = {"guidance": raw}
+    if not isinstance(raw, dict):
+        raw = {}
     full = "\n" + "\n".join(doc["pages"])
     analysts = {_person(n) for n in _INTRODUCED.findall(full)}  # the moderator introduces every questioner
-    kept, dropped, not_mgmt = [], 0, 0
-    for j, g in enumerate(raw.get("guidance") or []):
-        page = docs.find_quote(doc, g.get("statement") or "", g.get("page"))
-        if page is None or not FORWARD.search(g.get("statement") or ""):
+    kept, dropped, not_mgmt, rejected = [], 0, 0, []
+    items = raw.get("guidance")
+    for j, g in enumerate(items if isinstance(items, list) else []):
+        gid = f"G{idx}.{j + 1}"
+        if not isinstance(g, dict):
             dropped += 1
+            rejected.append({"id": gid, "reason": "malformed", "statement": str(g)[:280]})
             continue
-        who = speaker_at(full, g["statement"], frozenset(analysts))
+        statement = g.get("statement") if isinstance(g.get("statement"), str) else ""
+        page = docs.find_quote(doc, statement, _page(g.get("page")))
+        if page is None or not FORWARD.search(statement):
+            dropped += 1
+            rejected.append({"id": gid, "reason": "not_verbatim" if page is None else "not_forward_looking",
+                             "page": _page(g.get("page")), "statement": statement[:280]})
+            continue
+        who = speaker_at(full, statement, frozenset(analysts))
         if who and (who.lower() == "moderator" or _person(who) in analysts):
             not_mgmt += 1  # verbatim, forward-looking — but said by an analyst, so not a promise
+            rejected.append({"id": gid, "reason": "not_management", "page": page, "speaker": who, "statement": statement[:280]})
             continue
         if who:
             g["speaker"] = who
-        g.update({"id": f"G{idx}.{j + 1}", "page": page, "call": call["quarter"], "call_label": call["label"],
+        g.update({"id": gid, "page": page, "call": call["quarter"], "call_label": call["label"],
                   "url": call["transcript"]})
         kept.append(attach_period(g, call["quarter"]))
     focus = []
-    for f in raw.get("analyst_focus") or []:
-        page = docs.find_quote(doc, f.get("quote") or "", f.get("page"))
+    for f in raw.get("analyst_focus") if isinstance(raw.get("analyst_focus"), list) else []:
+        if not isinstance(f, dict) or not isinstance(f.get("quote"), str):
+            continue
+        page = docs.find_quote(doc, f["quote"], _page(f.get("page")))
         if page:
             focus.append({**f, "page": page, "url": call["transcript"], "call": call["quarter"]})
     return {"call": call["quarter"], "label": call["label"], "url": call["transcript"], "pages": doc["n"],
             "guidance": kept, "dropped_unverified": dropped + not_mgmt, "dropped_not_management": not_mgmt,
-            "business": _grounded_business(raw.get("business"), doc),
+            "rejected": rejected, "business": _grounded_business(raw.get("business"), doc),
             "analyst_focus": focus}
+
+
+def _page(v) -> int | None:
+    """The model's page hint as an int ("5" and 5.0 included), else None — it only orders the search."""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
 
 
 def _strip_unverified(text: str, source: str) -> str:
@@ -136,13 +162,17 @@ def _strip_unverified(text: str, source: str) -> str:
     return " ".join(c for c in clauses if not ungrounded(c, source)).strip(" ;,")
 
 
-def _grounded_business(biz: dict | None, doc: dict) -> dict | None:
-    if not biz:
-        return biz
+def _grounded_business(biz, doc: dict) -> dict | None:
+    if isinstance(biz, str):  # a bare summary instead of {"summary": …}
+        biz = {"summary": biz}
+    if not isinstance(biz, dict) or not biz:
+        return None
     source = " ".join(doc["pages"])
-    biz["summary"] = _strip_unverified(biz.get("summary") or "", source)
-    for s in biz.get("segments") or []:
-        s["detail"] = _strip_unverified(s.get("detail") or "", source)
+    biz["summary"] = _strip_unverified(biz.get("summary") if isinstance(biz.get("summary"), str) else "", source)
+    segments = biz.get("segments") if isinstance(biz.get("segments"), list) else []
+    biz["segments"] = [s for s in segments if isinstance(s, dict)]
+    for s in biz["segments"]:
+        s["detail"] = _strip_unverified(s.get("detail") if isinstance(s.get("detail"), str) else "", source)
     return biz
 
 

@@ -25,7 +25,7 @@ LEAK = re.compile(r"\b(calc|Q|A|X)\.[A-Za-z]|\([SLGA]\d+(\.\d+)?[,)]")
 def quote_ok(g) -> bool:
     d = docs.pages(g["url"])
     i = g["page"] - 1
-    hay = docs.norm(d["pages"][i] + " " + (d["pages"][i + 1] if i + 1 < len(d["pages"]) else ""))
+    hay = docs.norm(docs.window(d, i))  # the cited page and the next, joined without the running header at the break
     parts = [p for p in re.split(r"\.\.\.|…", g["statement"]) if len(docs.norm(p)) >= 12]
     return bool(parts) and all(docs.norm(p) in hay for p in parts)
 

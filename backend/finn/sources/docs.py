@@ -63,6 +63,45 @@ def norm(s: str) -> str:
     return re.sub(r"[^a-z0-9%.]+", " ", s).strip()
 
 
+_PAGE_NO = re.compile(r"^page\s+\d{1,4}(?:\s+of\s+\d{1,4})?$", re.I)   # "Page 3 of 16"; a bare number may be text
+
+
+def _furniture(pages: list[str]) -> set[str]:
+    """Running header / footer lines: the same line on at least half the pages (and at least 3) — the company name,
+    the call date, "Classification - Internal". Speaker labels ("Moderator:") repeat as well but are transcript
+    text, so a line ending in ":" never counts."""
+    seen: dict[str, int] = {}
+    for p in pages:
+        for line in {x.strip() for x in p.splitlines() if x.strip()}:
+            seen[line] = seen.get(line, 0) + 1
+    need = max(3, len(pages) // 2)
+    return {line for line, n in seen.items() if n >= need and not line.endswith(":")}
+
+
+def _trim_edge(text: str, furniture: set[str], top: bool) -> str:
+    """Drop the run of header / footer / page-number lines at one edge of a page; the rest is untouched."""
+    lines = text.splitlines()
+    idx = range(len(lines)) if top else range(len(lines) - 1, -1, -1)
+    cut = 0
+    for i in idx:
+        line = lines[i].strip()
+        if line and line not in furniture and not _PAGE_NO.match(line):
+            break
+        cut += 1
+    return "\n".join(lines[cut:] if top else lines[:len(lines) - cut])
+
+
+def window(doc: dict, i: int, furniture: set[str] | None = None) -> str:
+    """The text a quote starting on page i (0-indexed) may cover: page i, then page i+1 — joined without the running
+    header / footer at the break ("…the documentation | HDFC Bank Limited / July 18, 2026 / Page 3 of 16 | and
+    approvals…"), which no spoken sentence contains. Only the lines at the break are dropped."""
+    pages = doc["pages"]
+    if i + 1 >= len(pages):
+        return pages[i]
+    furniture = _furniture(pages) if furniture is None else furniture
+    return _trim_edge(pages[i], furniture, top=False) + "\n" + _trim_edge(pages[i + 1], furniture, top=True)
+
+
 def find_quote(doc: dict, quote: str, hint_page: int | None = None) -> int | None:
     """Return the 1-indexed page containing the quote (normalised), or None if it is not in the document."""
     q = norm(quote)
@@ -71,16 +110,16 @@ def find_quote(doc: dict, quote: str, hint_page: int | None = None) -> int | Non
     order = list(range(len(doc["pages"])))
     if hint_page and 1 <= hint_page <= len(order):
         order.sort(key=lambda i: abs(i - (hint_page - 1)))
+    furniture = _furniture(doc["pages"])
     # allow a quote to span a page break
     for i in order:
-        hay = norm(doc["pages"][i] + " " + (doc["pages"][i + 1] if i + 1 < len(doc["pages"]) else ""))
-        if q in hay:
+        if q in norm(window(doc, i, furniture)):
             return i + 1
     # tolerate the model trimming the middle with an ellipsis
     parts = [p for p in re.split(r"\s*(?:\.\.\.|…)\s*", quote) if len(norm(p)) >= 12]
     if len(parts) > 1:
         for i in order:
-            hay = norm(doc["pages"][i] + " " + (doc["pages"][i + 1] if i + 1 < len(doc["pages"]) else ""))
+            hay = norm(window(doc, i, furniture))
             if all(norm(p) in hay for p in parts):
                 return i + 1
     return None

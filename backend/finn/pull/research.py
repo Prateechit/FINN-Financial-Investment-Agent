@@ -104,8 +104,9 @@ def _verify(fin: dict, calls: list[dict], secs: dict) -> None:
         recheck = "done" if second_judged else "unavailable"
         rewritten = True
     # Last resort, after the one rewrite: a still-flagged point gets narrative.repair_point — a mislabelled period named
-    # correctly, a cross-series trend moved onto one series, an unmet-promise / not-missed "failed" clause dropped — if
-    # the result passes every narrative check; then it is judged again by the verifier and the narrative checks.
+    # correctly, a cross-series trend moved onto one series, an unmet-promise / not-missed "failed" clause or a clause
+    # quoting an uncited number dropped — if the result passes every narrative check; then it is judged again by the
+    # verifier and the narrative checks.
     trimmed, trim_recheck = [], None
     if rewritten:
         rows = {f"L{i + 1}": r for i, r in enumerate(secs["ledger"].get("rows", []))}
@@ -113,9 +114,14 @@ def _verify(fin: dict, calls: list[dict], secs: dict) -> None:
             for i, p in enumerate(secs["thesis"][side]):
                 k = f"{side}{i + 1}"
                 if k in res and not res[k]["supported"] and \
-                        (cut := narrative.repair_point(p["point"], p["refs"], p["evidence"], rows, latest)):
+                        (cut := narrative.repair_point(p["point"], p["refs"], p["evidence"], rows, latest,
+                                                       grounded=p.get("grounded", True))):
                     p["trimmed_from"] = p["point"]
                     p["point"], p["refs"], p["evidence"] = cut
+                    # a repair only drops clauses or swaps in cited figures; an ungrounded point is grounded now
+                    # only if every number it still quotes is a cited figure
+                    if p.get("grounded") is False:
+                        p["grounded"] = bool(p["refs"]) and narrative.cited_grounded(p["point"], p["evidence"])
                     trimmed.append(k)
     if trimmed:
         third, third_judged = judge(secs["thesis"], {"rows": []})
@@ -234,7 +240,8 @@ def _build(sym: str) -> dict:
     try:
         calls = transcripts.extract_all(fin["concalls"], 5)
         good = [c for c in calls if c.get("guidance")]
-        secs["guidance"] = {"calls": [{k: c.get(k) for k in ("call", "label", "url", "pages", "dropped_unverified", "error")}
+        secs["guidance"] = {"calls": [{k: c.get(k) for k in ("call", "label", "url", "pages", "dropped_unverified",
+                                                              "dropped_not_management", "rejected", "error")}
                                       | {"n": len(c.get("guidance", []))} for c in calls],
                             "items": [g for c in calls for g in c.get("guidance", [])]}
         latest_biz = next((c["business"] for c in calls if c.get("business")), None)
