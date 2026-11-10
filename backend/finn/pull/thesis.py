@@ -3,13 +3,16 @@ import re
 
 from ..grounding import ungrounded
 from ..llm import chat_json
-from . import periods
+from . import narrative, periods
 from .ledger import compact, fmt, readable_ids
 
 SYSTEM = """You write the tightest possible bull and bear case on a listed company for a portfolio manager.
 You may use ONLY the EVIDENCE provided (computed signals S*, promise-ledger rows L*, management guidance G*,
 analyst questions A*, facts by id). No outside knowledge, no news, no valuation opinions beyond the facts given.
-Quote numbers exactly as given; do not compute new ones.
+Quote numbers exactly as given; do not compute new ones. Every number in a point must come from a ref that point
+cites — cite the fact for any ₹ level or % you quote. A comparison ("outpacing", "ahead of", "lagging") must say
+what its figures show — 5.6% does not outpace 20.0% — and compare like with like (a quarter-on-quarter rate is not
+set against a year-on-year rate or a multi-year CAGR).
 Do not append causes or implications the evidence does not state ("indicating weaker demand", "suggesting a
 recovery"). An interpretation is allowed only if it follows necessarily from the cited numbers — e.g. revenue growing
 faster than profit means margins are compressing; it never means they are recovering.
@@ -91,7 +94,7 @@ def build(fin: dict, calls: list[dict], ledger: dict, feedback: list[str] | None
               **{k: {"type": "guidance", **v, **({"ledger_verdict": verdict_of[k]} if k in verdict_of else {})}
                  for k, v in guid.items()},
               **{k: {"type": "ledger", "subject": v["subject"], "verdict": v["verdict"], "promise": v.get("promise"),
-                     "why": v.get("why")} for k, v in led.items()},
+                     "delivered": v.get("delivered"), "why": v.get("why")} for k, v in led.items()},
               **{k: {"type": "fact", **v} for k, v in key_facts.items()}}
 
     def clean(p):
@@ -129,8 +132,10 @@ def build(fin: dict, calls: list[dict], ledger: dict, feedback: list[str] | None
             if "likely inorganic" in label and not re.search(r"merger|inorganic|acqui|step", point, re.I):
                 point = point.rstrip(".") + f" — {label[label.index('(') + 1:].rstrip(')')}."
                 break
-        return {"point": point, "refs": refs, "evidence": [lookup[r] for r in refs],
-                "grounded": not ungrounded(point, evidence) and bool(refs)}
+        cited = [lookup[r] for r in refs]
+        # every number must be in this point's own cited evidence — a figure elsewhere in the prompt does not count
+        return {"point": point, "refs": refs, "evidence": cited,
+                "grounded": bool(refs) and not ungrounded(point, evidence) and narrative.cited_grounded(point, cited)}
 
     return {"bull": [clean(p) for p in (out.get("bull") or [])[:3]],
             "bear": [clean(p) for p in (out.get("bear") or [])[:3]],

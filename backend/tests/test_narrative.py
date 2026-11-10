@@ -874,7 +874,7 @@ def test_grounded_and_legacy_points_are_not_flagged_or_trimmed():
 @pytest.mark.parametrize("point", [
     "Pre‑provision margin stayed above 25%, with PAT up 5.6% YoY.",       # the uncited number is the main claim
     "PAT grew strongly, while pre‑provision margin stayed above 25%.",    # nothing figure-based would remain
-    "PAT rose 5.7% QoQ to ₹19,000 Cr, while margin stayed above 25%.",    # the main clause has its own uncited number
+    "PAT rose 7.5% QoQ, while margin stayed above 25%.",                  # the main clause's own rate is uncited
 ])
 def test_ungrounded_repair_never_rewrites_the_main_claim(point):
     assert narrative.trim_ungrounded_clause(point, BULL2_1910["refs"], BULL2_1910["evidence"]) is None
@@ -895,3 +895,95 @@ def test_pipeline_rewrites_then_repairs_the_1910_bull2_and_marks_it_grounded(mon
     assert b2["point"] == "PAT rose 5.7% QoQ and 5.6% YoY." and b2["trimmed_from"] == BULL2_1910["point"]
     assert b2["grounded"] is True and b2["verified"] is True and v["flagged"] == 0
     assert any("Quotes 25" in x for x in v["initially_unsupported"])
+
+
+# ---------- comparisons say what their figures show; every figure is the point's own ----------
+# HDFCBANK 10 Nov 2026 19:34 bull 2 (disputed by the second-model check): a smaller rate "outpacing" a larger one, and a
+# ₹20,700 Cr level that is in neither of the point's references (it was elsewhere in the prompt's evidence).
+
+PAT_YOY_HD = _fact("X.pat_yoy.Q2 FY27", 5.6, "Q2 FY27", "PAT growth YoY (exchange filing)")
+PAT_CAGR = {"type": "fact", "id": "calc.pat_cagr_5y", "value": 20.0, "unit": "%", "period": "5y",
+            "label": "PAT CAGR 5y (spans the FY24 step-change: assets +59%, likely inorganic)"}
+PAT_LEVEL_HD = _level("X.PAT.Q2 FY27", 20700.0, "Q2 FY27", "PAT (exchange filing)")
+BULL2_1934 = {"point": "Q2 FY27 PAT grew 5.6% YoY to ₹20,700 Cr, outpacing the 5-year PAT CAGR of 20.0% — spans the "
+                       "FY24 step-change: assets +59%, likely inorganic.",
+              "refs": ["X.pat_yoy.Q2 FY27", "calc.pat_cagr_5y"], "evidence": [PAT_YOY_HD, PAT_CAGR], "grounded": False}
+
+
+def test_1934_bull2_smaller_rate_outpacing_a_larger_one_is_flagged():
+    assert narrative.comparison_direction_issue(BULL2_1934["point"], BULL2_1934["evidence"]) == (
+        'Says 5.6% is ahead of 20% ("outpacing"), but 5.6% is the smaller figure; state what the figures show or drop '
+        'the comparison.')
+    issue = narrative.thesis_issues({"bull": [copy.deepcopy(BULL2_1934)], "bear": []}, {"rows": []}, LATEST)["bull1"]["issue"]
+    assert "5.6% is the smaller figure" in issue and "Quotes 20700, which is not among its cited figures" in issue
+
+
+def test_1934_bull2_repair_drops_the_false_comparison_the_uncited_level_and_the_orphaned_caveat():
+    point, refs, evidence = narrative.repair_point(BULL2_1934["point"], BULL2_1934["refs"], BULL2_1934["evidence"], {},
+                                                   LATEST, grounded=False)
+    assert point == "Q2 FY27 PAT grew 5.6% YoY."                      # nothing invented: only cited text is kept
+    assert refs == ["X.pat_yoy.Q2 FY27"] and [e["id"] for e in evidence] == refs
+    th = {"bull": [{"point": point, "refs": refs, "evidence": evidence, "grounded": True}], "bear": []}
+    assert narrative.thesis_issues(th, {"rows": []}, LATEST) == {}
+
+
+@pytest.mark.parametrize("point,evidence", [
+    ("Revenue grew 9.1% YoY, outpacing PAT growth of 5.6%.", [X_REV_HD, PAT_YOY_HD]),
+    ("PAT grew 5.6% YoY, lagging revenue growth of 9.1%.", [X_REV_HD, PAT_YOY_HD]),
+    ("PAT growth of 5.6% was outpaced by revenue growth of 9.1%.", [X_REV_HD, PAT_YOY_HD]),   # "outpaced by" reverses
+    ("Q2 FY27 EBITDA margin of 16.1% exceeded Q2 FY26's 15.7%.", YOY_PAIR),
+    ("Revenue grew 28.4% YoY, beating the 15-17% guidance.", [{**X_REV_HD, "value": 28.4}]),
+    ("PAT rose 5.7% QoQ and 5.6% YoY, while pre‑provision margin stayed above 25%.", BULL2_1910["evidence"]),  # no "outpace"
+])
+def test_comparisons_that_agree_with_their_figures_are_not_flagged(point, evidence):
+    assert narrative.comparison_direction_issue(point, evidence) is None
+
+
+@pytest.mark.parametrize("point,issue", [
+    ("PAT growth of 5.6% was outpaced by revenue growth of 2.4%.", 'Says 5.6% trails 2.4% ("outpaced by")'),
+    ("PAT grew 25% QoQ, outpacing its 5-year CAGR of 20.0%.",
+     "Compares a quarter-on-quarter rate (25%) with a multi-year CAGR rate (20%) — not like-for-like."),
+])
+def test_reversed_and_not_like_for_like_comparisons_are_flagged(point, issue):
+    ev = [_fact("calc.Q.pat_qoq.Sep 2026", 25.0, "Sep 2026", "PAT growth QoQ (sequential)"), PAT_CAGR, PAT_YOY_HD]
+    assert narrative.comparison_direction_issue(point, ev).startswith(issue)
+
+
+def test_a_false_comparison_in_the_main_clause_is_left_disputed():
+    point = "PAT growth of 5.6% YoY outpaced the 5-year PAT CAGR of 20.0%, a strong result."
+    assert narrative.trim_bad_comparison(point, ["X.pat_yoy.Q2 FY27", "calc.pat_cagr_5y"], [PAT_YOY_HD, PAT_CAGR]) is None
+    assert narrative.repair_point(point, ["X.pat_yoy.Q2 FY27", "calc.pat_cagr_5y"], [PAT_YOY_HD, PAT_CAGR], {}, LATEST) is None
+
+
+def test_a_number_found_elsewhere_in_the_memo_does_not_ground_a_point():
+    point = "Q2 FY27 PAT grew 5.6% YoY to ₹20,700 Cr."
+    # 20,700 is a real reported figure — another point citing it is grounded, this one (not citing it) is not
+    assert narrative.cited_grounded("PAT reached ₹20,700 Cr.", [PAT_LEVEL_HD])
+    assert not narrative.cited_grounded(point, [PAT_YOY_HD])
+    assert narrative.cited_grounded(point, [PAT_YOY_HD, PAT_LEVEL_HD])                      # cite it, and it counts
+    assert narrative.cited_grounded(BULL2_1934["point"].replace(" to ₹20,700 Cr", ""), BULL2_1934["evidence"])  # caveat label
+
+
+def test_the_thesis_builder_marks_a_figure_from_an_uncited_fact_ungrounded(monkeypatch):
+    facts = {"X.pat_yoy.Q2 FY27": {k: v for k, v in PAT_YOY_HD.items() if k != "type"},
+             "X.PAT.Q2 FY27": {k: v for k, v in PAT_LEVEL_HD.items() if k != "type"}}
+    fin = {"signals": [], "facts": facts, "trajectory": {"quarterly": [{"period": "Jun 2026"}, {"period": "Sep 2026"}]}}
+    point = "Q2 FY27 PAT grew 5.6% YoY to ₹20,700 Cr."
+    for refs, grounded in ((["X.pat_yoy.Q2 FY27"], False), (["X.pat_yoy.Q2 FY27", "X.PAT.Q2 FY27"], True)):
+        monkeypatch.setattr(thesis, "chat_json", lambda *a, **k: {"bull": [{"point": point, "refs": list(refs)}],
+                                                                   "bear": [], "watch": None})
+        assert thesis.build(fin, [], {"rows": []})["bull"][0]["grounded"] is grounded
+
+
+def test_an_uncited_level_beside_a_cited_rate_is_dropped_but_a_cited_one_stays():
+    assert narrative.trim_ungrounded_clause("PAT grew 5.6% YoY to ₹20,700 Cr.", ["X.pat_yoy.Q2 FY27"], [PAT_YOY_HD])[0] == \
+        "PAT grew 5.6% YoY."
+    assert narrative.trim_ungrounded_clause("PAT grew 5.6% YoY to ₹20,700 Cr.", ["X.pat_yoy.Q2 FY27", "X.PAT.Q2 FY27"],
+                                            [PAT_YOY_HD, PAT_LEVEL_HD]) is None          # nothing uncited to drop
+
+
+def test_pipeline_repairs_the_1934_bull2_and_marks_it_grounded(monkeypatch):
+    secs = _run_hd(monkeypatch, {"bull": BULL2_1934, "bear": PLAIN})
+    b2, v = secs["thesis"]["bull"][1], secs["verification"]
+    assert b2["point"] == "Q2 FY27 PAT grew 5.6% YoY." and b2["refs"] == ["X.pat_yoy.Q2 FY27"]
+    assert b2["grounded"] is True and b2["verified"] is True and v["trimmed"] == ["bull2"] and v["flagged"] == 0
