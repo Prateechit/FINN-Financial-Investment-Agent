@@ -103,8 +103,9 @@ def _verify(fin: dict, calls: list[dict], secs: dict) -> None:
         judged |= second_judged
         recheck = "done" if second_judged else "unavailable"
         rewritten = True
-    # Last resort, after the one rewrite: a point still claiming an untested / unmet promise was met loses that clause
-    # if the rest stands on its own — then the trimmed text is judged again by the verifier and the narrative checks.
+    # Last resort, after the one rewrite: a still-flagged point gets narrative.repair_point — a mislabelled period named
+    # correctly, a cross-series trend moved onto one series, an unmet-promise / not-missed "failed" clause dropped — if
+    # the result passes every narrative check; then it is judged again by the verifier and the narrative checks.
     trimmed, trim_recheck = [], None
     if rewritten:
         rows = {f"L{i + 1}": r for i, r in enumerate(secs["ledger"].get("rows", []))}
@@ -112,7 +113,7 @@ def _verify(fin: dict, calls: list[dict], secs: dict) -> None:
             for i, p in enumerate(secs["thesis"][side]):
                 k = f"{side}{i + 1}"
                 if k in res and not res[k]["supported"] and \
-                        (cut := narrative.trim_unmet_promise_claim(p["point"], p["refs"], p["evidence"], rows, latest)):
+                        (cut := narrative.repair_point(p["point"], p["refs"], p["evidence"], rows, latest)):
                     p["trimmed_from"] = p["point"]
                     p["point"], p["refs"], p["evidence"] = cut
                     trimmed.append(k)

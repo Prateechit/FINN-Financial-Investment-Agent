@@ -668,10 +668,123 @@ def _run_hd(monkeypatch, thesis_points):
     return secs
 
 
-def test_pipeline_hdfcbank_bear2_is_repaired_and_bull1_stays_disputed(monkeypatch):
+def test_pipeline_hdfcbank_bear2_and_bull1_are_both_repaired(monkeypatch):
+    # PR #5 left bull 1 disputed; the series repair now moves its trend onto the one series that covers it.
     secs = _run_hd(monkeypatch, {"bull": BULL1_HD, "bear": BEAR2_HD})
     b1, b2, v = secs["thesis"]["bull"][1], secs["thesis"]["bear"][1], secs["verification"]
     assert b2["point"] == "ROA declined to 1.7% in FY26 from 2.0% in FY24." and b2["verified"] is True
     assert b2["trimmed_from"] == BEAR2_HD["point"]
-    assert b1["point"] == BULL1_HD["point"] and b1["verified"] is False and "Mixes two revenue growth" in b1["issue"]
-    assert v["trimmed"] == ["bear2"] and v["flagged"] == 1
+    assert b1["point"] == "Revenue growth accelerated to 9.4% YoY in Q2 FY27, up from 2.4% in Dec 2025."
+    assert b1["verified"] is True and b1["trimmed_from"] == BULL1_HD["point"] and b1["refs"] == ["S3"]
+    assert v["trimmed"] == ["bull2", "bear2"] and v["flagged"] == 0
+
+
+# ---------- HDFCBANK production memo 2026-11-10 07:51 (built on d253e69) ----------
+# bull 1 still mixed the filing's 9.1% with the statements' 2.4% after its rewrite; bear 2 labelled the FY26 ROA
+# (calc.roa.Mar 2026 = 1.7%) "Sep 2026". Both are now repaired deterministically from cited figures, then re-verified.
+
+REV_QOQ_HD = {"type": "fact", "id": "calc.Q.revenue_qoq.Sep 2026", "label": "Revenue growth QoQ (sequential)", "value": 5.0,
+              "unit": "%", "period": "Sep 2026"}
+BULL1_0751 = {"point": "Revenue growth accelerating, YoY 9.1% and QoQ 5% in Q2 FY27, up from 2.4% YoY earlier.",
+              "refs": ["S3", "X.revenue_yoy.Q2 FY27", "calc.Q.revenue_qoq.Sep 2026"], "evidence": [S3_HD, X_REV_HD, REV_QOQ_HD]}
+ROA_FY = [{"type": "fact", "id": "calc.roa.Mar 2026", "label": "Return on average assets", "value": 1.7, "unit": "%", "period": "FY26"},
+          {"type": "fact", "id": "calc.roa.Mar 2024", "label": "Return on average assets", "value": 2.0, "unit": "%", "period": "FY24"}]
+BEAR2_0751 = {"point": "ROA declined to 1.7% in Sep 2026 after peaking at 2% in FY24, with ROA promise at risk.",
+              "refs": ["calc.roa.Mar 2026", "calc.roa.Mar 2024", "L1"],
+              "evidence": [*ROA_FY, {"type": "ledger", "subject": "Return on Assets", "verdict": "at_risk"}]}
+
+
+def test_0751_bull1_is_moved_onto_the_one_series_that_covers_it():
+    point, refs, evidence = narrative.repair_point(BULL1_0751["point"], BULL1_0751["refs"], BULL1_0751["evidence"], LED_HD, LATEST)
+    assert point == "Revenue growth accelerating, YoY 9.4% and QoQ 5% in Q2 FY27, up from 2.4% YoY earlier."
+    assert refs == ["S3", "calc.Q.revenue_qoq.Sep 2026"]                     # the filing's 9.1% is no longer cited
+    th = {"bull": [{"point": point, "refs": refs, "evidence": evidence}], "bear": []}
+    assert narrative.thesis_issues(th, {"rows": list(LED_HD.values())}, LATEST) == {}
+
+
+def test_0751_bear2_mislabelled_fy26_roa_is_flagged_and_named_by_its_own_period():
+    assert narrative.period_label_issue(BEAR2_0751["point"], BEAR2_0751["evidence"]) == \
+        "Labels the FY26 figure 1.7% (calc.roa.Mar 2026) as Sep 2026; use its own period, FY26."
+    point, refs, _ = narrative.repair_point(BEAR2_0751["point"], BEAR2_0751["refs"], BEAR2_0751["evidence"], LED_HD, LATEST)
+    assert point == "ROA declined to 1.7% in FY26 after peaking at 2% in FY24, with ROA promise at risk."
+    assert refs == BEAR2_0751["refs"]
+    assert narrative.promise_issue(point, refs, BEAR2_0751["evidence"], LED_HD, LATEST) is None   # "at risk" is right
+
+
+@pytest.mark.parametrize("point,evidence", [
+    ("Revenue growth accelerated to 9.4% YoY in Q2 FY27 from 2.4% in Q3 FY26.", [S3_HD]),         # the intended wording
+    ("ROA declined to 1.7% in FY26 from 2.0% in FY24, with the ROA promise still at risk.", ROA_FY),
+    ("ROA was 1.7% in Mar 2026.", ROA_FY),                                    # an FY figure by its year-end quarter
+    ("Revenue growth was 2.4% YoY (Dec 2025) and 9.4% (Sep 2026).", [S3_HD]),
+    ("Q2 FY27 EBITDA margin of 16.1% exceeded Q2 FY26's 15.7%.",              # a label after a verb is not the figure's
+     [_fact("X.EBITDA margin.Q2 FY27", 16.1, "Q2 FY27"), _fact("X.EBITDA margin.Q2 FY26", 15.7, "Q2 FY26")]),
+    ("FY27 YTD revenue growth reached 31% in FY27.", [{"type": "fact", "id": "calc.ytd_revenue_growth", "label": "Revenue growth",
+                                                        "value": 31.0, "unit": "%", "period": "FY27 YTD (2Q)"}]),
+    ("Margin rose to 16.07% in Q2 FY27 from 16.04% in Q1 FY27.", SEQ_PAIR),
+])
+def test_correctly_labelled_figures_pass(point, evidence):
+    assert narrative.period_label_issue(point, evidence) is None
+    assert narrative.series_issue(point, evidence) is None
+
+
+@pytest.mark.parametrize("point,evidence,label", [
+    ("ROA fell to 1.7% in Q2 FY27.", ROA_FY, "Q2 FY27"),                       # an annual figure given a quarter
+    ("Revenue growth hit 9.4% in Q3 FY26.", [S3_HD], "Q3 FY26"),               # the wrong quarter
+    ("ROA was 2.0% in FY25.", ROA_FY, "FY25"),                                 # the wrong year
+])
+def test_mislabelled_figures_are_flagged(point, evidence, label):
+    assert f"as {label}" in narrative.period_label_issue(point, evidence)
+
+
+def test_ambiguous_mislabel_is_flagged_but_not_repaired():
+    twin = [*ROA_FY, {"type": "fact", "id": "calc.roa.Mar 2019", "label": "Return on average assets", "value": 1.7, "unit": "%", "period": "FY19"}]
+    point = "ROA was 1.7% in Sep 2026."          # 1.7% is both FY26 and FY19: which period is meant is not knowable
+    assert narrative.period_label_issue(point, twin)
+    assert narrative.repair_point(point, [f["id"] for f in twin], twin, {}, LATEST) is None
+    assert narrative._relabel_periods(point, twin) == point
+
+
+def test_series_repair_skips_when_no_single_series_covers_the_trend():
+    s3_partial = {**S3_HD, "figures": [S3_HD["figures"][0]]}               # the statements lack a Q2 FY27 figure
+    point = BULL1_HD["point"]
+    assert narrative.series_issue(point, [s3_partial, X_REV_HD])
+    assert narrative.repair_point(point, ["S3", "X.revenue_yoy.Q2 FY27"], [s3_partial, X_REV_HD], {}, LATEST) is None
+
+
+def test_repair_leaves_a_genuinely_missed_promise_and_sound_points_alone():
+    assert narrative.repair_point("FY26 capex of ₹1,058 Cr missed the capex target.", ["L2"], [], LED_HD, LATEST) is None
+    assert narrative.repair_point("ROA declined to 1.7% in FY26 from 2.0% in FY24.", ["calc.roa.Mar 2026", "calc.roa.Mar 2024"],
+                                  ROA_FY, LED_HD, LATEST) is None
+
+
+def test_pipeline_repairs_both_0751_points_and_verifies_them(monkeypatch):
+    secs = _run_hd(monkeypatch, {"bull": BULL1_0751, "bear": BEAR2_0751})
+    b1, b2, v = secs["thesis"]["bull"][1], secs["thesis"]["bear"][1], secs["verification"]
+    assert b1["point"] == "Revenue growth accelerating, YoY 9.4% and QoQ 5% in Q2 FY27, up from 2.4% YoY earlier."
+    assert b2["point"] == "ROA declined to 1.7% in FY26 after peaking at 2% in FY24, with ROA promise at risk."
+    assert b1["verified"] is True and b2["verified"] is True
+    assert (v["trimmed"], v["trim_recheck"], v["flagged"]) == (["bull2", "bear2"], "done", 0)
+
+
+def test_pipeline_repaired_0751_points_are_unchecked_when_the_verifier_is_down(monkeypatch):
+    calls = []
+
+    def check(claims):
+        calls.append(1)
+        return {c["id"]: {"supported": True, "issue": ""} for c in claims} if len(calls) < 3 else {}
+
+    monkeypatch.setattr(research.verify, "check", check)
+    monkeypatch.setattr(research.thesis, "build", lambda fin, calls_, led, feedback=None: {
+        "bull": [copy.deepcopy(PLAIN), copy.deepcopy(BULL1_0751), copy.deepcopy(PLAIN)],
+        "bear": [copy.deepcopy(PLAIN), copy.deepcopy(BEAR2_0751), copy.deepcopy(PLAIN)], "watch": None})
+    secs = {"thesis": research.thesis.build(None, None, None), "ledger": {"rows": [copy.deepcopy(ROA_ROW), copy.deepcopy(CAPEX_MISSED)]}}
+    research._verify(FIN, [], secs)
+    assert secs["thesis"]["bull"][1]["verified"] is None and secs["thesis"]["bear"][1]["verified"] is None
+    assert secs["verification"]["status"] == "rewrite_unverified"
+
+
+def test_generator_and_verifier_prompts_state_the_series_and_period_rules():
+    assert "a trend or comparison uses\nfigures from one series only" in thesis.SYSTEM
+    assert "an FY26 figure\nis \"FY26\", not a month or a quarter" in thesis.SYSTEM
+    assert "labelled with a period other than its own" in verify.SYSTEM
+    assert verify._evidence_text({"type": "signal", "text": "x"}) == "Computed signal (standardised statements): x"

@@ -19,6 +19,8 @@ tagged with its fiscal period; a claim about one period that rests on figures fr
 "Sequential" / "quarter-on-quarter" means against the immediately preceding quarter; a comparison with the same
 quarter a year earlier (Q2 FY27 vs Q2 FY26) is year-on-year, so calling it sequential is unsupported. A claim that a
 promise was met / validated / delivered is unsupported unless its promise-ledger verdict is "delivered".
+A trend that combines figures for one metric from two series (the exchange filing vs the standardised statements) is
+unsupported, and so is a figure labelled with a period other than its own (an FY26 figure called "Sep 2026").
 Quotes are verbatim. A "[topic, as FINN extracted it: …]" tag says what the quoted passage was about in the transcript
 (e.g. a bank's "margin" in a passage on Net Interest Margin) — the same context the claim's writer had. Use it to know
 what a quote refers to; figures and conclusions must still come from the quote or the reported figures.
@@ -29,7 +31,7 @@ Return JSON: {"checks":[{"id":"<claim id>","supported":true|false,"issue":"if fa
 def _evidence_text(e: dict) -> str:
     t = e.get("type")
     if t == "signal":
-        return f"Computed signal: {e.get('text')}"
+        return f"Computed signal (standardised statements): {e.get('text')}"
     if t == "fact" or "value" in e:
         fiscal = periods.tag(e.get("id", ""), e.get("period"))
         when = f"{e.get('period')} = {fiscal}" if fiscal else e.get("period")
