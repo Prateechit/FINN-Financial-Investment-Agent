@@ -3,6 +3,7 @@ import re
 
 from ..grounding import ungrounded
 from ..llm import chat_json
+from . import periods
 from .ledger import compact, fmt, readable_ids
 
 SYSTEM = """You write the tightest possible bull and bear case on a listed company for a portfolio manager.
@@ -14,6 +15,13 @@ recovery"). An interpretation is allowed only if it follows necessarily from the
 faster than profit means margins are compressing; it never means they are recovering.
 Analyst questions (A*) are claims, not facts — attribute them ("analysts pressed on …"). Weigh the most recent
 quarter's profit and margin signals heavily: a bull case that ignores a sharp profit fall is not credible.
+Comparison periods: India's fiscal year runs April–March (Q2 FY27 = Jul–Sep 2026). "Sequential" / "quarter-on-quarter"
+means against the immediately preceding quarter (Q2 FY27 vs Q1 FY27) — cite both quarters' figures. The same quarter a
+year earlier (Q2 FY27 vs Q2 FY26) is "year-on-year", never "sequential".
+Promise status comes only from the ledger verdict shown next to each guidance item and ledger row: say a promise is
+met, delivered, kept or validated only if its verdict is "delivered". A "too_early" promise has not been tested (its
+period may not have started), and "on_track" / "at_risk" promises are still open — current figures can be described
+as consistent with them, never as proof they were kept.
 
 Return JSON:
 {"bull":[{"point":"max 28 words","refs":["S1","L2","G4.3","calc.cfo_pat_5y"]}],
@@ -22,25 +30,46 @@ Return JSON:
 Exactly 3 bull and 3 bear points; every point must cite at least one ref."""
 
 
+def _sequential_facts(fin: dict) -> dict:
+    """The latest quarter's quarter-on-quarter figures and the exact margins of the last two quarters, so a
+    "sequential" claim has the right pair to cite (exchange-filing X.* figures are mostly year-on-year pairs)."""
+    q = (fin.get("trajectory") or {}).get("quarterly") or []
+    cols = [r["period"] for r in q[-2:]]
+    ids = [f"calc.Q.ebitda_margin.{c}" for c in cols] + [f"calc.Q.{m}.{cols[-1]}" for m in ("revenue_qoq", "pat_qoq") if cols]
+    return {k: fin["facts"][k] for k in ids if k in fin["facts"]}
+
+
+def _guidance_line(k: str, g: dict, verdict: str | None) -> str:
+    p = periods.promise_period(g)
+    about = f"period {p.label}" if p else f"horizon {g.get('horizon')}"
+    status = f"; ledger verdict: {verdict}" if verdict else ""
+    return f"{k}: {g.get('subject')} — {g.get('target')} ({about}{status}): \"{g['statement']}\""
+
+
 def build(fin: dict, calls: list[dict], ledger: dict, feedback: list[str] | None = None) -> dict:
     sig = {f"S{i + 1}": s for i, s in enumerate(fin["signals"])}
     focus = {f"A{i + 1}": f for i, f in enumerate([f for c in calls for f in c.get("analyst_focus", [])][:8])}
     latest = next((c for c in calls if c.get("guidance")), None)
     guid = {g["id"]: g for g in (latest or {}).get("guidance", [])}
     led = {f"L{i + 1}": r for i, r in enumerate(ledger.get("rows", []))}
+    # Ledger verdict on each guidance item, so the prose can't call an untested promise kept.
+    verdict_of = {g: r["verdict"] for r in ledger.get("rows", []) for g in r.get("guidance_ids") or []}
     key_facts = {k: v for k, v in fin["facts"].items() if k.startswith(("calc.", "X.")) and not k.startswith("calc.Q.")}
+    key_facts.update(_sequential_facts(fin))
     ev = ["SIGNALS:"] + [f"{k}: [{s['tone']}] {s['text']}" for k, s in sig.items()]
     ev += ["PROMISE LEDGER:", compact(ledger)]
-    ev += ["LATEST GUIDANCE:"] + [f"{k}: {g.get('subject')} — {g.get('target')} ({g.get('horizon')}): \"{g['statement']}\"" for k, g in guid.items()]
+    ev += ["LATEST GUIDANCE:"] + [_guidance_line(k, g, verdict_of.get(k)) for k, g in guid.items()]
     ev += ["ANALYST QUESTIONS:"] + [f"{k}: {f['topic']} — \"{f['quote']}\"" for k, f in focus.items()]
-    ev += ["FACTS:"] + [f"{k} = {fmt(v['value'], v['unit'])} ({v['label']}, {v['period']})" for k, v in key_facts.items()]
+    ev += ["FACTS:"] + [f"{k} = {fmt(v['value'], v['unit'])} ({v['label']}, {v['period']}"
+                        + (f" = {t}" if (t := periods.tag(k, v["period"])) else "") + ")" for k, v in key_facts.items()]
     evidence = "\n".join(ev)
     prompt = evidence if not feedback else (evidence + "\n\nA reviewer checked your previous draft against the evidence and "
                                             "found these claims unsupported. Do not repeat them:\n- " + "\n- ".join(feedback))
     out = chat_json("thesis" if not feedback else "thesis_revise", "reason", SYSTEM, prompt, max_tokens=12000)
     valid = set(sig) | set(focus) | set(guid) | set(led) | set(key_facts)
     lookup = {**{k: {"type": "signal", **v} for k, v in sig.items()}, **{k: {"type": "analyst", **v} for k, v in focus.items()},
-              **{k: {"type": "guidance", **v} for k, v in guid.items()},
+              **{k: {"type": "guidance", **v, **({"ledger_verdict": verdict_of[k]} if k in verdict_of else {})}
+                 for k, v in guid.items()},
               **{k: {"type": "ledger", "subject": v["subject"], "verdict": v["verdict"], "promise": v.get("promise"),
                      "why": v.get("why")} for k, v in led.items()},
               **{k: {"type": "fact", **v} for k, v in key_facts.items()}}
@@ -58,9 +87,10 @@ def build(fin: dict, calls: list[dict], ledger: dict, feedback: list[str] | None
             refs += [x.strip() for x in group.split(",") if x.strip() in valid and x.strip() not in refs]
         point = re.sub(r"\s*\((?:[SLGA]\d+(?:\.\d+)?|calc\.[^,()]+|X\.[^,()]+)(?:,\s*(?:[SLGA]\d+(?:\.\d+)?|calc\.[^,()]+|X\.[^,()]+))*\)", "", point)
         point = readable_ids(re.sub(r"\s*\(?refs?:?\s*\[[^\]]*\]\)?", "", point).strip(), fin["facts"])
-        # A year-on-year comparison needs both sides: citing "X.PAT margin.Q2 FY27" also cites the same metric a year earlier.
+        # A comparison needs both sides: citing "X.PAT margin.Q2 FY27" also cites the same metric a year earlier, and
+        # citing one exact quarterly margin also cites the adjacent quarter's (the sequential pair).
         for r in list(refs):
-            if r.startswith("X."):
+            if r.startswith(("X.", "calc.Q.ebitda_margin.")):
                 base, period = r.rsplit(".", 1)
                 refs += [k for k in key_facts if k.rsplit(".", 1)[0] == base and k != r and k not in refs]
         # Something only an analyst said is a claim; if the sentence doesn't attribute it, attribute it.

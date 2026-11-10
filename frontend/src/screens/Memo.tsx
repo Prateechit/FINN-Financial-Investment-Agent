@@ -116,6 +116,7 @@ function ThesisCol({ title, points, cls, onRef }: { title: string; points: Thesi
                 {p.refs.length} source{p.refs.length === 1 ? '' : 's'}
               </button>
               {!p.grounded && <span className="ml-1 text-[11px] text-note">⚠ unverified</span>}
+              {p.grounded && p.verified === false && <span className="ml-1 text-[11px] text-note" title={p.issue ?? undefined}>⚠ disputed by FINN’s check</span>}
             </div>
           </li>
         ))}
