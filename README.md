@@ -297,15 +297,79 @@ Both services are deployed from the `main` branch.
 
 ## Screenshots
 
-Captured from the app at phone size (`docs/screens/`):
+An evaluator's path through the app, from the daily Brief to the evidence behind a research claim. All images are in [`docs/screens/`](docs/screens/); the Tata Technologies (TATATECH) screens come from the production memo built on 10 November 2026.
 
-| Brief | Alerts | Portfolio | Company |
-|---|---|---|---|
-| <img src="docs/screens/brief.png" width="190"> | <img src="docs/screens/alerts.png" width="190"> | <img src="docs/screens/portfolio.png" width="190"> | <img src="docs/screens/company_DIXON.png" width="190"> |
+### 1. Push — the Brief and its ranking
 
-| Memo — Promise Ledger | Ledger evidence | Memo — HDFC Bank | Dark mode |
-|---|---|---|---|
-| <img src="docs/screens/memo_DIXON.png" width="190"> | <img src="docs/screens/memo_evidence.png" width="190"> | <img src="docs/screens/memo_HDFCBANK.png" width="190"> | <img src="docs/screens/brief_dark.png" width="190"> |
+<table>
+<tr>
+<td width="42%" valign="top"><img src="docs/screens/brief.png" width="300" alt="The Brief"></td>
+<td valign="top"><img src="docs/screens/materiality_explanation.png" width="440" alt="Materiality score explanation"></td>
+</tr>
+<tr>
+<td valign="top"><sub><b>Brief.</b> One sentence on what needs you, then ranked material stories. Results arrive as a ready-made card — Q2 FY27 revenue, EBITDA, PBT and PAT vs last quarter and last year, from NSE XBRL, with “3 checks passed”.</sub></td>
+<td valign="top"><sub><b>Materiality, explained.</b> Tapping a story's score lists every rule that produced it — here an Asian Paints management change: base 45, −10 for a non-executive board role, +35 for a top-management role, +4 for portfolio weight → 74, <i>Notable</i> — plus the exchange record and the filings grouped into the story.</sub></td>
+</tr>
+</table>
+
+### 2. Alerts and company search
+
+<table>
+<tr>
+<td width="50%" valign="top"><img src="docs/screens/alerts_mobile.png" width="400" alt="Alerts"></td>
+<td valign="top"><img src="docs/screens/research_search_tatatech.png" width="400" alt="Research search"></td>
+</tr>
+<tr>
+<td valign="top"><sub><b>Alerts.</b> Your own thresholds (±4% daily move, 2× 20-day volume, filing score ≥ 70). Each price or volume alert names the filing that most likely explains it (“Likely why”).</sub></td>
+<td valign="top"><sub><b>Research search.</b> Typing a company name — “tata technologies” — resolves it to its NSE ticker, TATATECH, before any research starts.</sub></td>
+</tr>
+</table>
+
+### 3. Pull — the Promise Ledger and its evidence
+
+<table>
+<tr>
+<td width="42%" valign="top"><img src="docs/screens/memo_DIXON.png" width="300" alt="Promise Ledger overview"></td>
+<td valign="top"><img src="docs/screens/tatatech_revenue_evidence.png" width="440" alt="TATATECH revenue growth evidence"></td>
+</tr>
+<tr>
+<td valign="top"><sub><b>Promise Ledger (Dixon Technologies).</b> What management guided on five earnings calls vs what was reported, with a one-paragraph credibility read and the mix of verdicts.</sub></td>
+<td valign="top"><sub><b>Delivered.</b> TATATECH guided sequential revenue growth above 10% for Q4 FY26 on its Q3 FY26 call; it reported 15.1% for the March 2026 quarter. The quote is verbatim, with the speaker and a link to the transcript page.</sub></td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td width="50%" valign="top"><img src="docs/screens/tatatech_margin_evidence.png" width="400" alt="TATATECH EBITDA margin evidence"></td>
+<td valign="top"><img src="docs/screens/tatatech_too_early_evidence.png" width="400" alt="TATATECH too-early verdict"></td>
+</tr>
+<tr>
+<td valign="top"><sub><b>Exact figures, right periods.</b> “Exceed our Q2 run-rate” is judged on exact margins — 16.03% for Q4 FY26 vs 15.72% for Q2 FY26 (operating profit ÷ sales) — not on rounded OPM %, which shows 16% for both.</sub></td>
+<td valign="top"><sub><b>Code overrides the model.</b> The model called the H2 FY27 margin promise “delivered”; FINN's fiscal-period check marks it <i>Too early</i> because H2 FY27 hasn't started, and says so on the verdict.</sub></td>
+</tr>
+</table>
+
+### 4. Bull vs bear, with sources
+
+<table>
+<tr>
+<td width="50%" valign="top"><img src="docs/screens/tatatech_bull_evidence.png" width="400" alt="Bull point evidence"></td>
+<td valign="top"><sub><b>Every point shows its sources.</b> Tapping “4 sources” on a bull point opens the evidence it was written from: the computed revenue-growth signal, the Promise Ledger row it relies on (<i>On track</i>), management's verbatim guidance and the exchange-filing figure (28.4% YoY in Q2 FY27).</sub></td>
+</tr>
+</table>
+
+### More screens
+
+<table>
+<tr>
+<td width="50%" valign="top"><img src="docs/screens/company_DIXON.png" width="260" alt="Company page"></td>
+<td valign="top"><img src="docs/screens/memo_HDFCBANK.png" width="260" alt="HDFC Bank memo"></td>
+</tr>
+<tr>
+<td valign="top"><sub><b>Company page.</b> Price history with critical and notable filings marked, and the latest results card.</sub></td>
+<td valign="top"><sub><b>Refusing to use a proxy.</b> In a bank's memo, promises about metrics the sources don't report — such as net interest margin — are marked <i>Can't verify</i> rather than judged on a different figure.</sub></td>
+</tr>
+</table>
 
 ## Limitations
 
