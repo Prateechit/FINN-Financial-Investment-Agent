@@ -23,6 +23,9 @@ export default function Research({ go }: { go: (r: string) => void }) {
   const [resolving, setResolving] = useState(false)
   const [noMatch, setNoMatch] = useState<string | null>(null)
   const { data: recent } = useApi<{ symbol: string; name?: string; status: string; updated: string; verdicts?: Record<string, number> }[]>('/api/research')
+  // Failed builds (status "error") have nothing to show — a name that matched no company, or statements that couldn't
+  // be loaded — so they are left out of "Your memos". Done, partial and running memos stay listed.
+  const memos = (recent ?? []).filter((r) => r.status !== 'error')
   const query = q.trim()
   const hits = results.for === query ? results.hits : []
 
@@ -83,11 +86,11 @@ export default function Research({ go }: { go: (r: string) => void }) {
         </p>
       )}
 
-      {!!recent?.length && (
+      {memos.length > 0 && (
         <>
           <SectionTitle>Your memos</SectionTitle>
           <Card>
-            {recent.map((r) => (
+            {memos.map((r) => (
               <button key={r.symbol} onClick={() => go(`memo/${r.symbol}`)} className="flex w-full items-center gap-3 border-t border-line px-4 py-3 text-left first:border-t-0 active:bg-sunk">
                 <div className="min-w-0 flex-1">
                   <div className="text-[14px] font-semibold">{r.symbol} <span className="font-normal text-ink3">· {r.name}</span></div>
