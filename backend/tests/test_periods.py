@@ -137,6 +137,83 @@ def test_dixon_and_hdfcbank_verdicts_unchanged_by_the_new_guards(sym):
         assert row["fact_ids"] == original["fact_ids"], (sym, original["subject"])
 
 
+# ---------- row titles name the promise's own period (production TATATECH rebuild, 2026-11-10) ----------
+
+G52 = {"id": "G5.2", "call": "Q2 FY27", "subject": "operating EBITDA margin", "target": "sequential margin improvement",
+       "horizon": "H2 FY27", "period": "H2 FY27",
+       "statement": "Against this backdrop, we expect to deliver sequential margin improvement through disciplined "
+                    "execution and productivity initiatives."}
+
+
+def test_production_h2_row_titled_q2_fy27_is_retitled_and_keeps_too_early():
+    row = {"subject": "Q2 FY27 sequential EBITDA margin improvement", "promise": "sequential margin improvement in H2 FY27",
+           "verdict": "too_early", "downgraded_from": "delivered", "guidance_ids": ["G5.2"],
+           "why": "H2 FY27 hasn't started yet — the latest reported quarter is Q2 FY27."}
+    ledger._subject_guard(row, {"G5.2": G52})
+    assert row["subject"] == "H2 FY27 sequential EBITDA margin improvement"
+    assert row["subject_corrected_from"] == "Q2 FY27 sequential EBITDA margin improvement"
+    assert (row["verdict"], row["downgraded_from"]) == ("too_early", "delivered")       # the verdict is untouched
+
+
+@pytest.mark.parametrize("subject,guidance", [
+    ("H2 FY27 sequential EBITDA margin improvement", G52),                                # already right
+    ("Q4 FY26 EBITDA margin vs Q2 FY26 run-rate", {"id": "G5.2", "call": "Q3 FY26", "horizon": "Q4"}),  # base named too
+    ("Operating EBITDA margin improvement", G52),                                         # no period in the title
+    ("Q3 FY27 margin recovery", G52),                                                     # a quarter inside H2 FY27
+    ("FY27 revenue growth", {"id": "G5.2", "call": "Q2 FY27", "horizon": "FY27"}),
+])
+def test_titles_that_fit_the_promise_period_are_left_alone(subject, guidance):
+    row = {"subject": subject, "verdict": "too_early", "guidance_ids": ["G5.2"]}
+    ledger._subject_guard(row, {"G5.2": guidance})
+    assert row["subject"] == subject and "subject_corrected_from" not in row
+
+
+CAPEX = {"G1": {"id": "G1", "call": "Q2 FY26", "horizon": "FY26"}, "G2": {"id": "G2", "call": "Q4 FY26", "horizon": "FY27"},
+         "G3": {"id": "G3", "call": "Q2 FY27", "horizon": "FY28"}}
+
+
+@pytest.mark.parametrize("verdict", ["goalposts_moved", "dropped"])
+def test_moved_or_dropped_promise_keeps_its_original_period_title(verdict):
+    # Review probe H1: "FY26 capex target", pushed out to FY27 later, was retitled "FY27 capex target".
+    row = {"subject": "FY26 capex target", "verdict": verdict, "guidance_ids": ["G1", "G2"]}
+    ledger._subject_guard(row, CAPEX)
+    assert row["subject"] == "FY26 capex target" and "subject_corrected_from" not in row
+    wrong = {"subject": "Q2 FY27 capex", "verdict": verdict, "guidance_ids": ["G2"]}  # even a wrong period: not touched
+    ledger._subject_guard(wrong, CAPEX)
+    assert wrong["subject"] == "Q2 FY27 capex"
+
+
+def test_title_naming_an_earlier_guidance_period_of_the_row_is_kept():
+    row = {"subject": "FY26 capex target", "verdict": "at_risk", "guidance_ids": ["G1", "G2"]}  # latest says FY27
+    ledger._subject_guard(row, CAPEX)
+    assert row["subject"] == "FY26 capex target"
+
+
+def test_title_matching_no_guidance_period_of_the_row_is_still_corrected():
+    row = {"subject": "FY25 capex target", "verdict": "at_risk", "guidance_ids": ["G1", "G2"]}
+    ledger._subject_guard(row, CAPEX)
+    assert row["subject"] == "FY27 capex target" and row["subject_corrected_from"] == "FY25 capex target"
+
+
+@pytest.mark.parametrize("subject,ids,expected", [
+    ("FY26-27 capex", ["G2"], "FY26-27 capex"),       # FY26-27 is FY27: matches, unchanged (review probe H2)
+    ("FY2026–27 capex", ["G2"], "FY2026–27 capex"),
+    ("FY26-27 capex", ["G3"], "FY28 capex"),           # wrong period: the whole range is replaced, never "FY28-27"
+])
+def test_fiscal_year_ranges_are_handled_whole(subject, ids, expected):
+    row = {"subject": subject, "verdict": "on_track", "guidance_ids": ids}
+    ledger._subject_guard(row, CAPEX)
+    assert row["subject"] == expected and "-27" not in row["subject"].replace(subject, "")
+
+
+@pytest.mark.parametrize("sym", ["DIXON", "HDFCBANK", "TATATECH"])
+def test_no_fixture_title_is_changed(sym):
+    for original in FIXTURE[sym]["rows"]:
+        row = copy.deepcopy(original)
+        ledger._subject_guard(row, {g["id"]: g for g in row["evidence"]})
+        assert row["subject"] == original["subject"], (sym, original["subject"])
+
+
 def test_missed_uses_resolved_period_for_its_deadline():
     g = {"G1": {"id": "G1", "call": "Q2 FY27", "horizon": "H2 FY27"}, "G2": {"id": "G2", "call": "Q2 FY26", "horizon": "FY26"}}
     running = {"verdict": "missed", "guidance_ids": ["G1"], "why": ""}
