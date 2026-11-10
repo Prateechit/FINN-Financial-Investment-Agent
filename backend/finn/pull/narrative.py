@@ -21,25 +21,69 @@ _SEQUENTIAL = re.compile(r"\bsequential(?:ly)?\b|\bquarter[- ]on[- ]quarter\b|\b
 _YEAR_ON_YEAR = re.compile(r"\byear[- ]on[- ]year\b|\by-?o-?y\b|\bfrom a year (?:earlier|ago)\b", re.I)
 
 
-def _quarterly_pairs(evidence: list[dict]) -> tuple[list[tuple], list[tuple]]:
-    """(adjacent pairs, year-apart pairs) among the cited quarterly figures, per metric."""
-    by_metric: dict[str, set] = {}
-    for e in evidence:
-        fid = str(e.get("id") or "")
-        if e.get("type") != "fact" or "value" not in e or "." not in fid:
-            continue
-        p = periods.fact_period(fid, e.get("period"))
-        if p and p.kind == "quarter":
-            by_metric.setdefault(fid.rsplit(".", 1)[0], set()).add(p.start)
-    adjacent, year_apart = [], []
-    for metric, qs in by_metric.items():
-        for a in qs:
-            for b in qs:
-                if b == a.shift(1):
-                    adjacent.append((metric, a, b))
-                if b == a.shift(4):
-                    year_apart.append((metric, a, b))
-    return adjacent, year_apart
+# Metric of a fact id, whatever its source: "calc.Q.pat_qoq.Sep 2026" → ("pat", "qoq"); "X.pat_yoy.Q2 FY27" →
+# ("pat", "yoy"); "X.EBITDA margin.Q2 FY27", "calc.Q.ebitda_margin.Sep 2026" and "Q.OPM %.Sep 2026" → ("ebitda margin",
+# None). A *_qoq / *_yoy fact is itself a comparison — one figure is enough evidence for it.
+_METRIC_ALIAS = {"sales": "revenue", "revenues": "revenue", "net profit": "pat", "opm": "ebitda margin",
+                 "operating margin": "ebitda margin"}
+
+
+def _metric(fid: str) -> tuple[str, str | None]:
+    body = re.sub(r"^(?:calc\.Q\.|calc\.|X\.|Q\.|A\.)", "", fid.rsplit(".", 1)[0])
+    kind = None
+    if m := re.search(r"[_ ](qoq|yoy)$", body, re.I):
+        kind, body = m.group(1).lower(), body[:m.start()]
+    name = re.sub(r"\s+", " ", body.replace("_", " ").replace("%", "")).strip().lower()
+    return _METRIC_ALIAS.get(name, name), kind
+
+
+class _Evidence:
+    """Per metric: is there sequential evidence (adjacent quarters, or a QoQ figure) and year-on-year evidence (the same
+    quarter a year apart, or a YoY figure) among the cited facts?"""
+
+    def __init__(self, evidence: list[dict]):
+        quarters: dict[str, set] = {}
+        self.seq: dict[str, str] = {}   # metric → description of the sequential evidence
+        self.yoy: dict[str, str] = {}   # metric → description of the year-on-year evidence
+        self.adjacent: dict[str, tuple] = {}
+        self.year_apart: dict[str, tuple] = {}
+        for e in evidence:
+            fid = str(e.get("id") or "")
+            if e.get("type") != "fact" or "value" not in e or "." not in fid:
+                continue
+            metric, kind = _metric(fid)
+            p = periods.fact_period(fid, e.get("period"))
+            label = p.label if p else e.get("period")
+            if kind == "qoq":
+                self.seq.setdefault(metric, f"the {label} quarter-on-quarter {metric} change")
+            elif kind == "yoy":
+                self.yoy.setdefault(metric, f"the {label} year-on-year {metric} change")
+            elif p and p.kind == "quarter":
+                quarters.setdefault(metric, set()).add(p.start)
+        for metric, qs in quarters.items():
+            for a in sorted(qs):
+                for b in sorted(qs):
+                    if b == a.shift(1):
+                        self.adjacent.setdefault(metric, (a, b))
+                        self.seq.setdefault(metric, f"a {b.label} vs {a.label} comparison")
+                    if b == a.shift(4):
+                        self.year_apart.setdefault(metric, (a, b))
+                        self.yoy.setdefault(metric, f"a {b.label} vs {a.label} comparison")
+        self.metrics = set(quarters) | set(self.seq) | set(self.yoy)
+
+
+# How a clause names a metric. "PAT margin" is not "PAT"; a bare "margin" means whichever margin was cited.
+_MENTION = {"pat margin": r"\b(?:pat|net profit|profit)\s+margins?\b",
+            "ebitda margin": r"\b(?:ebitda|operating)\s+margins?\b|\bopm\b",
+            "revenue": r"\b(?:revenues?|sales|top[- ]line)\b",
+            "pat": r"\b(?:pat|net profit|profits?)\b(?!\s+margins?)"}
+
+
+def _named_metrics(clause: str, cited: set) -> set:
+    named = {m for m in cited if re.search(_MENTION.get(m, r"\b" + re.escape(m) + r"\b"), clause, re.I)}
+    if not any("margin" in m for m in named) and re.search(r"\bmargins?\b", clause, re.I):
+        named |= {m for m in cited if "margin" in m and not re.search(r"\b(?:pat|net profit|profit)\s+margins?\b", clause, re.I)}
+    return named
 
 
 # "Sequential" can name a management promise rather than describe the cited figures: "consistent with guidance for
@@ -50,23 +94,34 @@ _PROMISE_BEFORE = re.compile(r"\b(?:promis\w*|guid\w*|target\w*|goals?|commit\w*
 _PROMISE_AFTER = re.compile(r"^\W*(?:[\w‑-]+\W+){0,3}?(?:promise|guidance|target|goal|commitment|pledge|outlook)s?\b", re.I)
 
 
-def _describes_figures(rx: re.Pattern, point: str) -> bool:
-    """Does any mention of this comparison type describe the figures (not name a promise)?"""
+def _figure_clauses(rx: re.Pattern, point: str) -> list[str]:
+    """Clauses in which a mention of this comparison type describes the figures (not a promise)."""
+    out = []
     for clause in _CLAUSE_BREAK.split(point):
         for m in rx.finditer(clause or ""):
             if not (_PROMISE_BEFORE.search(clause[:m.start()]) or _PROMISE_AFTER.match(clause[m.end():])):
-                return True
-    return False
+                out.append(clause)
+                break
+    return out
+
+
+def _mislabelled(rx: re.Pattern, point: str, ev: _Evidence, wrong: dict, right: dict) -> str | None:
+    """A clause using this comparison word about a metric whose cited evidence is only the other kind of comparison.
+    The metric is the one the clause names; if it names none of the cited metrics, the whole point's evidence decides."""
+    for clause in _figure_clauses(rx, point):
+        metrics = _named_metrics(clause, ev.metrics) or (ev.metrics if not right else set())
+        for metric in sorted(metrics):
+            if metric in wrong and metric not in right:
+                return wrong[metric]
+    return None
 
 
 def comparison_issue(point: str, evidence: list[dict]) -> str | None:
-    adjacent, year_apart = _quarterly_pairs(evidence)
-    if _describes_figures(_SEQUENTIAL, point) and year_apart and not adjacent:
-        _, a, b = year_apart[0]
-        return f"Calls a {b.label} vs {a.label} comparison sequential; the same quarter a year apart is year-on-year."
-    if _describes_figures(_YEAR_ON_YEAR, point) and adjacent and not year_apart:
-        _, a, b = adjacent[0]
-        return f"Calls a {b.label} vs {a.label} comparison year-on-year; adjacent quarters are sequential."
+    ev = _Evidence(evidence)
+    if what := _mislabelled(_SEQUENTIAL, point, ev, ev.yoy, ev.seq):
+        return f"Calls {what} sequential; the same quarter a year apart is year-on-year."
+    if what := _mislabelled(_YEAR_ON_YEAR, point, ev, ev.seq, ev.yoy):
+        return f"Calls {what} year-on-year; adjacent quarters are sequential."
     return None
 
 
