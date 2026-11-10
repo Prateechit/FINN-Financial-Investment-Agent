@@ -168,6 +168,42 @@ def promise_issue(point: str, refs: list[str], evidence: list[dict], ledger_rows
     return None
 
 
+_CLAUSE_SEP = re.compile(r",\s+|;\s+|\s+[—–]\s+|\s+-\s+")
+
+
+def trim_unmet_promise_claim(point: str, refs: list[str], evidence: list[dict], ledger_rows: dict[str, dict],
+                             latest: periods.FQ | None) -> tuple[str, list[str], list[dict]] | None:
+    """Last resort for a point that, after its rewrite, still says an untested or unmet promise was met: drop the clause
+    that says so ("…, validating sequential margin improvement guidance") when the rest of the sentence stands on its
+    own as a figure-based claim, and drop the references only that clause used (the promise's guidance / ledger row).
+
+    Returns (point, refs, evidence) — which must pass every narrative check — or None when the claim is the main
+    clause and there is nothing sound to keep. The caller re-verifies the trimmed text.
+    """
+    if not promise_issue(point, refs, evidence, ledger_rows, latest):
+        return None
+    m = next((m for m in _CLAIMS_ACHIEVED.finditer(point)
+              if not _NEGATED.search(point[:m.start()]) and not _NEGATION_INSIDE.search(m.group(0))), None)
+    before = [s for s in _CLAUSE_SEP.finditer(point) if s.end() <= m.start()] if m else []
+    if not before:
+        return None
+    after = next((s for s in _CLAUSE_SEP.finditer(point) if s.start() >= m.end()), None)
+    kept = (point[:before[-1].start()] + (point[after.start():] if after else "")).strip().rstrip(".,;") + "."
+    if not re.search(r"\d", kept):
+        return None
+    unmet = [r for r in _cited_promises(refs, ledger_rows) if r.get("verdict") != "delivered"]
+    unmet_ids = {g for r in unmet for g in r.get("guidance_ids") or []}
+    drop = {ref for ref in refs if (ref in ledger_rows and ledger_rows[ref] in unmet) or ref in unmet_ids}
+    drop |= {e.get("id") for e in evidence if e.get("type") == "guidance" and latest
+             and (p := periods.promise_period(e)) and p.start > latest}
+    if len(refs) == len(evidence) and any(r not in drop for r in refs):
+        pairs = [(r, e) for r, e in zip(refs, evidence) if r not in drop]
+        refs, evidence = [r for r, _ in pairs], [e for _, e in pairs]
+    if comparison_issue(kept, evidence) or promise_issue(kept, refs, evidence, ledger_rows, latest):
+        return None
+    return kept, refs, evidence
+
+
 def thesis_issues(thesis: dict, ledger: dict, latest: periods.FQ | None) -> dict[str, dict]:
     """{"bull2": {"supported": False, "issue": "…"}} for every bull/bear point that fails a check."""
     led = {f"L{i + 1}": r for i, r in enumerate(ledger.get("rows", []))}

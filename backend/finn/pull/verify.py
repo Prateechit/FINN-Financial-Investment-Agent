@@ -19,6 +19,9 @@ tagged with its fiscal period; a claim about one period that rests on figures fr
 "Sequential" / "quarter-on-quarter" means against the immediately preceding quarter; a comparison with the same
 quarter a year earlier (Q2 FY27 vs Q2 FY26) is year-on-year, so calling it sequential is unsupported. A claim that a
 promise was met / validated / delivered is unsupported unless its promise-ledger verdict is "delivered".
+Quotes are verbatim. A "[topic, as FINN extracted it: …]" tag says what the quoted passage was about in the transcript
+(e.g. a bank's "margin" in a passage on Net Interest Margin) — the same context the claim's writer had. Use it to know
+what a quote refers to; figures and conclusions must still come from the quote or the reported figures.
 Do not use outside knowledge.
 Return JSON: {"checks":[{"id":"<claim id>","supported":true|false,"issue":"if false: max 20 words on what is wrong"}]}"""
 
@@ -35,9 +38,11 @@ def _evidence_text(e: dict) -> str:
         p = periods.promise_period(e) if e.get("call") else None
         about = f" about {p.label}" if p else ""
         status = f" [promise-ledger verdict: {e['ledger_verdict']}]" if e.get("ledger_verdict") else ""
-        return f"Management said ({e.get('call')} call){about}: \"{e.get('statement')}\"{status}"
+        topic = f" [topic, as FINN extracted it: {e['subject']}]" if e.get("subject") else ""
+        return f"Management said ({e.get('call')} call){about}{topic}: \"{e.get('statement')}\"{status}"
     if t == "analyst":
-        return f"An analyst asked: \"{e.get('quote')}\""
+        topic = f" [topic, as FINN extracted it: {e['topic']}]" if e.get("topic") else ""
+        return f"An analyst asked{topic}: \"{e.get('quote')}\""
     if t == "ledger":
         return (f"Promise-ledger row: {e.get('subject')} — verdict {e.get('verdict')}. Promised: {e.get('promise')}. "
                 f"Assessment: {e.get('why')}")

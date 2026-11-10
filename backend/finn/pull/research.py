@@ -103,6 +103,32 @@ def _verify(fin: dict, calls: list[dict], secs: dict) -> None:
         judged |= second_judged
         recheck = "done" if second_judged else "unavailable"
         rewritten = True
+    # Last resort, after the one rewrite: a point still claiming an untested / unmet promise was met loses that clause
+    # if the rest stands on its own — then the trimmed text is judged again by the verifier and the narrative checks.
+    trimmed, trim_recheck = [], None
+    if rewritten:
+        rows = {f"L{i + 1}": r for i, r in enumerate(secs["ledger"].get("rows", []))}
+        for side in ("bull", "bear"):
+            for i, p in enumerate(secs["thesis"][side]):
+                k = f"{side}{i + 1}"
+                if k in res and not res[k]["supported"] and \
+                        (cut := narrative.trim_unmet_promise_claim(p["point"], p["refs"], p["evidence"], rows, latest)):
+                    p["trimmed_from"] = p["point"]
+                    p["point"], p["refs"], p["evidence"] = cut
+                    trimmed.append(k)
+    if trimmed:
+        third, third_judged = judge(secs["thesis"], {"rows": []})
+        trim_recheck = "done" if third_judged else "unavailable"
+        if third_judged:  # every point judged afresh on its current text
+            for k in [k for k in res if k.startswith(("bull", "bear"))]:
+                del res[k]
+            judged = {k for k in judged if not k.startswith(("bull", "bear"))} | third_judged
+            res.update(third)
+        else:  # no verifier: trimmed points keep only the narrative re-check, so they end up unchecked (not verified)
+            for k in trimmed:
+                res.pop(k, None)
+                judged.discard(k)
+            res.update({k: v for k, v in third.items() if k in trimmed})
     unchecked = 0
     for side in ("bull", "bear"):
         for i, p in enumerate(secs["thesis"][side]):
@@ -117,18 +143,67 @@ def _verify(fin: dict, calls: list[dict], secs: dict) -> None:
         if r:
             row["verified"], row["issue"] = r["supported"], r["issue"] or None
     flagged = sum(1 for p in secs["thesis"]["bull"] + secs["thesis"]["bear"] if p.get("verified") is False) +         sum(1 for r in secs["ledger"].get("rows", []) if r.get("verified") is False)
-    status = ("narrative_only" if not first_ran else "rewrite_unverified" if recheck == "unavailable" else "done")
+    status = ("narrative_only" if not first_ran else
+              "rewrite_unverified" if "unavailable" in (recheck, trim_recheck) else "done")
     secs["verification"] = {"status": status, "checked": len(res), "flagged": flagged, "unchecked": unchecked,
-                            "rewrote_thesis": rewritten, "recheck": recheck, "initially_unsupported": bad}
+                            "rewrote_thesis": rewritten, "recheck": recheck, "trimmed": trimmed,
+                            "trim_recheck": trim_recheck, "initially_unsupported": bad}
 
 
-def build(sym: str, force: bool = False) -> dict:
+FRESH_FOR = dt.timedelta(hours=24)            # a done / partial memo younger than this is not rebuilt on view
+RUNNING_TTL = dt.timedelta(minutes=10)        # a stored "running" state younger than this: a build is in progress
+RETRY_AFTER_FAILURE = dt.timedelta(minutes=30)  # after a failed build, wait this long before an automatic retry
+
+
+def _younger(ts: str | None, limit: dt.timedelta) -> bool:
+    """Is this ISO timestamp less than `limit` old? A missing or unreadable timestamp is not young."""
+    try:
+        return bool(ts) and now() - dt.datetime.fromisoformat(ts) < limit
+    except (TypeError, ValueError):
+        return False
+
+
+def _complete(memo: dict | None) -> bool:
+    """A finished memo worth keeping: done, with its Promise Ledger."""
+    return bool(memo and memo.get("status") == "done" and (memo.get("sections") or {}).get("ledger"))
+
+
+def _hold(prev: dict | None, force: bool) -> str | None:
+    """Why a build must NOT start now, or None. A build already in progress — in this process or, via its stored
+    "running" state, in another (deploy overlap, restart) — blocks even an explicit rebuild; freshness and the
+    post-failure cooldown only hold back automatic (on-view) rebuilds."""
+    if not prev:
+        return None
+    if prev.get("status") == "running" and _younger(prev.get("started") or prev.get("updated"), RUNNING_TTL):
+        return "in_progress"
+    if force:
+        return None
+    if prev.get("status") in ("done", "partial") and _younger(prev.get("updated"), FRESH_FOR):
+        return "fresh"
+    failed_at = (prev.get("refresh_failed") or {}).get("at") or (prev.get("updated") if prev.get("status") == "error" else None)
+    if _younger(failed_at, RETRY_AFTER_FAILURE):
+        return "cooling_down"
+    return None
+
+
+def build(sym: str, force: bool = False, previous: dict | None = None) -> dict:
+    """Build a memo. If the build does not finish ("partial" / "error") and the company already had a complete memo,
+    that memo is kept — marked with refresh_failed — rather than replaced by a broken one. `previous` is the memo as
+    it was before start() stored its "running" placeholder."""
     sym = sym.upper().strip()
-    prev = get(sym)
-    if prev and not force and prev.get("status") in ("done", "partial"):
-        age = now() - dt.datetime.fromisoformat(prev["updated"])
-        if age < dt.timedelta(hours=24):
-            return prev
+    prev = previous if previous is not None else get(sym)
+    if prev and not force and prev.get("status") in ("done", "partial") and _younger(prev.get("updated"), FRESH_FOR):
+        return prev
+    state = _build(sym)
+    if state.get("status") != "done" and _complete(prev):
+        kept = {**prev, "refresh_failed": {"at": now().isoformat(), "status": state.get("status"),
+                                           "errors": state.get("errors") or []}}
+        kv_set(_key(sym), kept)
+        return kept
+    return state
+
+
+def _build(sym: str) -> dict:
     started = now()
     state = {"symbol": sym, "status": "running", "stage": "Reading financial statements", "started": started.isoformat(),
              "updated": started.isoformat(), "sections": {}, "errors": []}
@@ -186,21 +261,23 @@ def build(sym: str, force: bool = False) -> dict:
 
 
 def start(sym: str, force: bool = False) -> dict:
-    """Kick off a background build; return current state immediately."""
+    """Kick off a background build if one is due; return the current state immediately.
+
+    At most one build per company runs at a time (this process: _running; other processes: the stored "running" state).
+    Viewing a memo rebuilds it only when it is stale (older than FRESH_FOR) and no failed build was attempted within
+    RETRY_AFTER_FAILURE; force=True (the Rebuild button) skips those two, never the one-build-at-a-time rule."""
     sym = sym.upper().strip()
     prev = get(sym)
     with _lock:
         if sym in _running:
             return prev or {"symbol": sym, "status": "running", "stage": "Starting", "sections": {}}
-        fresh = prev and prev.get("status") in ("done", "partial") and \
-            now() - dt.datetime.fromisoformat(prev["updated"]) < dt.timedelta(hours=24)
-        if fresh and not force:
+        if _hold(prev, force):
             return prev
         _running.add(sym)
 
     def run():
         try:
-            build(sym, force=True)
+            build(sym, force=True, previous=prev)
         finally:
             with _lock:
                 _running.discard(sym)

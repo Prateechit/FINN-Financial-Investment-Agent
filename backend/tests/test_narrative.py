@@ -391,3 +391,154 @@ def test_verifier_sees_ledger_verdict_on_guidance_and_the_sequential_rule():
 
 def test_ledger_prompt_ties_credibility_to_the_verdicts():
     assert "say a promise was missed only if its row is \"missed\"" in ledger.SYSTEM
+
+
+# ---------- final pass: TATATECH bull 2 (production memo 2026-11-10 06:03, built on d41ad7e) ----------
+# After its one rewrite the point still said "…, validating sequential margin improvement guidance" — a promise the
+# ledger marks too_early (H2 FY27 hasn't started). The year-on-year comparison before the comma is correct.
+
+G52_0603 = {"type": "guidance", "id": "G5.2", "call": "Q2 FY27", "subject": "operating EBITDA margin",
+            "statement": "Against this backdrop, we expect to deliver sequential margin improvement through disciplined "
+                         "execution and productivity initiatives.",
+            "target": "sequential margin improvement", "horizon": "H2 FY27", "period": "H2 FY27", "ledger_verdict": "too_early"}
+BULL2_0603 = {"point": "Q2 FY27 EBITDA margin of 16.1% exceeded Q2 FY26's 15.7%, validating sequential margin improvement guidance.",
+              "refs": ["X.EBITDA margin.Q2 FY27", "X.EBITDA margin.Q2 FY26", "G5.2"],
+              "evidence": [_fact("X.EBITDA margin.Q2 FY27", 16.1, "Q2 FY27", "EBITDA margin (exchange filing)"),
+                           _fact("X.EBITDA margin.Q2 FY26", 15.7, "Q2 FY26", "EBITDA margin (exchange filing)"), G52_0603]}
+ROWS_0603 = [{"subject": "Q4 FY26 EBITDA margin", "verdict": "delivered", "guidance_ids": ["G2.2"], "evidence": [], "facts": [],
+              "delivered": "", "why": ""},
+             {"subject": "H2 FY27 sequential EBITDA margin improvement", "verdict": "too_early", "guidance_ids": ["G5.2"],
+              "evidence": [{k: v for k, v in G52_0603.items() if k not in ("type", "ledger_verdict")}], "facts": [],
+              "delivered": "", "why": ""}]
+LED_0603 = {f"L{i + 1}": r for i, r in enumerate(ROWS_0603)}
+PLAIN = {"point": "Debt/equity rose from 0.07x in Mar 2025 to 0.29x in Sep 2026.", "refs": ["S5"],
+         "evidence": [{"type": "signal", "tone": "neg", "text": "Debt/equity 0.07x → 0.29x"}]}
+
+
+def test_production_tatatech_bull2_is_still_flagged_as_written():
+    assert "too early to judge" in narrative.promise_issue(BULL2_0603["point"], BULL2_0603["refs"], BULL2_0603["evidence"], LED_0603, LATEST)
+
+
+def test_tatatech_bull2_repair_keeps_the_year_on_year_comparison_and_drops_the_unmet_claim():
+    point, refs, evidence = narrative.trim_unmet_promise_claim(BULL2_0603["point"], BULL2_0603["refs"],
+                                                               BULL2_0603["evidence"], LED_0603, LATEST)
+    assert point == "Q2 FY27 EBITDA margin of 16.1% exceeded Q2 FY26's 15.7%."
+    assert refs == ["X.EBITDA margin.Q2 FY27", "X.EBITDA margin.Q2 FY26"]          # G5.2 only served the removed clause
+    assert [e["id"] for e in evidence] == refs
+    th = {"bull": [{"point": point, "refs": refs, "evidence": evidence}], "bear": []}
+    assert narrative.thesis_issues(th, {"rows": ROWS_0603}, LATEST) == {}
+
+
+@pytest.mark.parametrize("point", [
+    "Margin of 16.1% validates the H2 FY27 sequential margin improvement guidance.",   # the claim is the main clause
+    "This confirms the guidance, with margin at 16.1%.",
+    "Validating the margin guidance, the Q2 FY27 margin rose to 16.1%.",
+])
+def test_repair_refuses_when_the_unmet_claim_is_the_main_clause(point):
+    assert narrative.trim_unmet_promise_claim(point, BULL2_0603["refs"], BULL2_0603["evidence"], LED_0603, LATEST) is None
+
+
+def test_repair_leaves_sound_points_alone():
+    assert narrative.trim_unmet_promise_claim("Q2 FY27 EBITDA margin of 16.1% exceeded Q2 FY26's 15.7%.",
+                                              BULL2_0603["refs"], BULL2_0603["evidence"], LED_0603, LATEST) is None
+    delivered = "Q4 FY26 EBITDA margin of 16.03% beat the Q2 run-rate, validating the promise."
+    assert narrative.trim_unmet_promise_claim(delivered, ["L1"], [], LED_0603, LATEST) is None   # L1 is delivered
+
+
+def _thesis_0603():
+    return {"bull": [copy.deepcopy(PLAIN), copy.deepcopy(BULL2_0603), copy.deepcopy(PLAIN)],
+            "bear": [copy.deepcopy(PLAIN) for _ in range(3)], "watch": None}
+
+
+def _run_0603(monkeypatch, passes):
+    check, seen = _verifier(*passes)
+    monkeypatch.setattr(research.verify, "check", check)
+    monkeypatch.setattr(research.thesis, "build", lambda fin, calls, led, feedback=None: _thesis_0603())  # model repeats it
+    secs = {"thesis": _thesis_0603(), "ledger": {"rows": copy.deepcopy(ROWS_0603)}}
+    research._verify(FIN, [], secs)
+    return secs, seen
+
+
+def test_pipeline_repairs_the_point_the_rewrite_repeated_and_reverifies_it(monkeypatch):
+    secs, seen = _run_0603(monkeypatch, [_all_supported] * 3)
+    p, v = secs["thesis"]["bull"][1], secs["verification"]
+    assert p["point"] == "Q2 FY27 EBITDA margin of 16.1% exceeded Q2 FY26's 15.7%." and p["trimmed_from"] == BULL2_0603["point"]
+    assert p["verified"] is True and p["refs"] == ["X.EBITDA margin.Q2 FY27", "X.EBITDA margin.Q2 FY26"]
+    assert len(seen) == 3 and "bull2" in seen[2]                       # the trimmed text went back to the verifier
+    assert (v["status"], v["trimmed"], v["trim_recheck"], v["flagged"], v["unchecked"]) == ("done", ["bull2"], "done", 0, 0)
+
+
+def test_repaired_point_is_unchecked_not_verified_when_the_verifier_is_unavailable(monkeypatch):
+    secs, _ = _run_0603(monkeypatch, [_all_supported, _all_supported, lambda claims: {}])
+    p, v = secs["thesis"]["bull"][1], secs["verification"]
+    assert p["point"].endswith("15.7%.") and p["verified"] is None
+    assert (v["status"], v["trim_recheck"]) == ("rewrite_unverified", "unavailable") and v["unchecked"] == 1
+
+
+def test_repaired_point_the_verifier_still_rejects_stays_flagged(monkeypatch):
+    reject = lambda claims: {c["id"]: ({"supported": False, "issue": "verifier objection"} if c["id"] == "bull2"  # noqa: E731
+                                       else {"supported": True, "issue": ""}) for c in claims}
+    secs, _ = _run_0603(monkeypatch, [_all_supported, _all_supported, reject])
+    p = secs["thesis"]["bull"][1]
+    assert p["verified"] is False and p["issue"] == "verifier objection" and secs["verification"]["flagged"] == 1
+
+
+def test_no_repair_without_a_rewrite_and_none_for_comparison_errors(monkeypatch):
+    # bull 2 of the original production memo (sequential + validated): the comparison error is not trimmed away
+    th = copy.deepcopy(TT["thesis"])
+    monkeypatch.setattr(research.verify, "check", _all_supported)
+    monkeypatch.setattr(research.thesis, "build", lambda fin, calls, led, feedback=None: copy.deepcopy(th))
+    secs = {"thesis": copy.deepcopy(th), "ledger": {"rows": _secs()["ledger"]["rows"]}}
+    research._verify(FIN, [], secs)
+    assert secs["thesis"]["bull"][1]["verified"] is False and secs["verification"]["trimmed"] == []
+
+
+# ---------- final pass: HDFCBANK's three disputed points (production memo 2026-11-09 14:47) ----------
+HD = FIX["HDFCBANK"]
+
+
+def test_hdfcbank_bull2_and_bear2_verifier_now_sees_the_topic_the_writer_saw():
+    # The quotes say "the trajectory" / "our margin decline"; FINN's extraction tied them to Net Interest Margin. The
+    # thesis writer saw that topic, the verifier did not — so it rejected "Net Interest Margin" as not in the evidence.
+    bull2, bear2 = HD["thesis"]["bull"][1], HD["thesis"]["bear"][1]
+    assert "Net Interest Margin" in bull2["point"] and "net interest margins" in bear2["point"]
+    g = verify._evidence_text(bull2["evidence"][0])
+    a = verify._evidence_text(bear2["evidence"][0])
+    assert g == ('Management said (Q2 FY27 call) about Q3 FY27 [topic, as FINN extracted it: Net Interest Margin (NIM)]: '
+                 '"The trajectory will be upward from the next quarter onwards."')
+    assert a.startswith("An analyst asked [topic, as FINN extracted it: Net Interest Margin (NIM) compression]: \"why still our margin")
+    assert "figures and conclusions must still come from the quote" in verify.SYSTEM
+
+
+def _hd_fin():
+    roa = {f"calc.roa.Mar {y}": v for y, v in ((2023, 1.98), (2024, 2.0), (2025, 1.74), (2026, 1.7))}
+    facts = {k: {"id": k, "label": "Return on average assets", "value": v, "unit": "%", "period": f"FY{k[-2:]}"} for k, v in roa.items()}
+    return {"signals": [], "facts": facts, "trajectory": {"quarterly": [{"period": "Jun 2026"}, {"period": "Sep 2026"}]}}
+
+
+def _thesis_with(monkeypatch, point, refs):
+    monkeypatch.setattr(thesis, "chat_json", lambda *a, **k: {"bull": [], "bear": [{"point": point, "refs": refs}], "watch": None})
+    return thesis.build(_hd_fin(), [], {"rows": []})["bear"][0]
+
+
+def test_hdfcbank_bear1_quoted_fy24_figure_is_attached_from_the_same_metric(monkeypatch):
+    point = HD["thesis"]["bear"][0]["point"]
+    assert point.startswith("Return on average assets declined from 2% in FY24 to 1.7% in FY26")
+    p = _thesis_with(monkeypatch, point, ["calc.roa.Mar 2026"])
+    assert p["refs"] == ["calc.roa.Mar 2026", "calc.roa.Mar 2024"]          # not FY23's 1.98% or FY25's 1.74%
+    assert [e["value"] for e in p["evidence"]] == [1.7, 2.0]
+
+
+@pytest.mark.parametrize("point", [
+    "Return on average assets fell to 1.7% in FY26, from about 2% earlier.",       # value without its period
+    "Return on average assets fell to 1.7% in FY26, below FY24.",                   # period without its value
+    "Return on average assets fell to 1.7% in FY26 from 2.1% in FY24.",             # a value the FY24 fact does not have
+])
+def test_quoted_figure_is_attached_only_with_both_its_value_and_its_period(monkeypatch, point):
+    assert _thesis_with(monkeypatch, point, ["calc.roa.Mar 2026"])["refs"] == ["calc.roa.Mar 2026"]
+
+
+def test_hdfcbank_and_dixon_prose_still_raise_no_narrative_flags():
+    for sym in ("DIXON", "HDFCBANK"):
+        m = FIX[sym]
+        assert narrative.thesis_issues(m["thesis"], {"rows": m["ledger_rows"]}, periods.from_calendar(m["latest_quarter"])) == {}
