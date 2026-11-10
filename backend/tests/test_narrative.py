@@ -833,3 +833,65 @@ def test_a_level_figure_beside_a_cross_series_trend_still_flags_and_repairs_it()
     point, new_refs, _ = narrative.repair_point(BULL1_0751["point"], refs, evidence, LED_HD, LATEST)
     assert point == "Revenue growth accelerating, YoY 9.4% and QoQ 5% in Q2 FY27, up from 2.4% YoY earlier."
     assert "X.revenue_yoy.Q2 FY27" not in new_refs and REV_LEVEL["id"] in new_refs
+
+
+# ---------- every quoted number is a cited figure ----------
+# HDFCBANK 10 Nov 2026 19:10 bull 2: "pre-provision margin stayed above 25%" cites 25.4% and 26.1%. True, but 25 is not a
+# reported figure: the thesis builder marked it grounded=False (shown as "⚠ unverified"), yet nothing sent it to the
+# rewrite or the repair, so the second-model check passed it as verified.
+
+PPM = [_fact("X.Pre-provision margin.Q2 FY27", 25.4, "Q2 FY27", "Pre-provision margin (exchange filing)"),
+       _fact("X.Pre-provision margin.Q2 FY26", 26.1, "Q2 FY26", "Pre-provision margin (exchange filing)")]
+PAT_GROWTH = [_fact("calc.Q.pat_qoq.Sep 2026", 5.7, "Sep 2026", "PAT growth QoQ (sequential)"),
+              _fact("X.pat_yoy.Q2 FY27", 5.6, "Q2 FY27", "PAT growth YoY (exchange filing)")]
+BULL2_1910 = {"point": "PAT rose 5.7% QoQ and 5.6% YoY, while pre‑provision margin stayed above 25%.",
+              "refs": [f["id"] for f in PAT_GROWTH + PPM], "evidence": PAT_GROWTH + PPM, "grounded": False}
+
+
+def test_1910_bull2_ungrounded_threshold_is_flagged_with_the_figure_it_invented():
+    th = {"bull": [copy.deepcopy(BULL2_1910)], "bear": []}
+    assert narrative.thesis_issues(th, {"rows": []}, LATEST) == {"bull1": {"supported": False, "issue":
+        "Quotes 25, which is not among its cited figures (5.6, 5.7, 25.4, 26.1); quote a cited figure or drop that claim."}}
+
+
+def test_1910_bull2_repair_drops_only_the_uncited_clause_and_the_facts_it_alone_used():
+    point, refs, evidence = narrative.repair_point(BULL2_1910["point"], BULL2_1910["refs"], BULL2_1910["evidence"], {},
+                                                   LATEST, grounded=False)
+    assert point == "PAT rose 5.7% QoQ and 5.6% YoY."
+    assert refs == ["calc.Q.pat_qoq.Sep 2026", "X.pat_yoy.Q2 FY27"] and [e["id"] for e in evidence] == refs
+    assert narrative.cited_grounded(point, evidence)
+    th = {"bull": [{"point": point, "refs": refs, "evidence": evidence, "grounded": True}], "bear": []}
+    assert narrative.thesis_issues(th, {"rows": []}, LATEST) == {}
+
+
+def test_grounded_and_legacy_points_are_not_flagged_or_trimmed():
+    for p in ({**BULL2_1910, "grounded": True}, {k: v for k, v in BULL2_1910.items() if k != "grounded"}):
+        assert narrative.grounding_issue(p) is None
+    # the pipeline's own grounded flag decides; a point it judged grounded is never cut for an uncited number
+    assert narrative.repair_point(BULL2_1910["point"], BULL2_1910["refs"], BULL2_1910["evidence"], {}, LATEST) is None
+
+
+@pytest.mark.parametrize("point", [
+    "Pre‑provision margin stayed above 25%, with PAT up 5.6% YoY.",       # the uncited number is the main claim
+    "PAT grew strongly, while pre‑provision margin stayed above 25%.",    # nothing figure-based would remain
+    "PAT rose 5.7% QoQ to ₹19,000 Cr, while margin stayed above 25%.",    # the main clause has its own uncited number
+])
+def test_ungrounded_repair_never_rewrites_the_main_claim(point):
+    assert narrative.trim_ungrounded_clause(point, BULL2_1910["refs"], BULL2_1910["evidence"]) is None
+    assert narrative.repair_point(point, BULL2_1910["refs"], BULL2_1910["evidence"], {}, LATEST, grounded=False) is None
+
+
+def test_ungrounded_repair_keeps_cited_clauses_after_the_dropped_one():
+    point = "PAT rose 5.6% YoY, pre‑provision margin stayed above 25%, and pre‑provision margin was 25.4% in Q2 FY27."
+    kept, refs, _ = narrative.trim_ungrounded_clause(point, BULL2_1910["refs"], BULL2_1910["evidence"])
+    assert kept == "PAT rose 5.6% YoY, and pre‑provision margin was 25.4% in Q2 FY27."
+    assert refs == ["X.pat_yoy.Q2 FY27", "X.Pre-provision margin.Q2 FY27"]
+
+
+def test_pipeline_rewrites_then_repairs_the_1910_bull2_and_marks_it_grounded(monkeypatch):
+    secs = _run_hd(monkeypatch, {"bull": BULL2_1910, "bear": PLAIN})     # the rewrite repeats the same wording
+    b2, v = secs["thesis"]["bull"][1], secs["verification"]
+    assert v["rewrote_thesis"] is True and v["trimmed"] == ["bull2"] and v["trim_recheck"] == "done"
+    assert b2["point"] == "PAT rose 5.7% QoQ and 5.6% YoY." and b2["trimmed_from"] == BULL2_1910["point"]
+    assert b2["grounded"] is True and b2["verified"] is True and v["flagged"] == 0
+    assert any("Quotes 25" in x for x in v["initially_unsupported"])

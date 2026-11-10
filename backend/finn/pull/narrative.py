@@ -9,6 +9,8 @@ with the fixed verdicts or with the figures a sentence cites. These checks do, w
   - one series: the % figures a point quotes for one metric must come from one data series (the exchange filing's
     9.1% and the standardised statements' 2.4% are not one revenue-growth trend);
   - period labels: a figure is labelled with its own reporting period (the FY26 ROA is not "1.7% in Sep 2026");
+  - cited figures: a point the thesis builder marked ungrounded quotes a number that is not a cited figure ("stayed
+    above 25%" when the figures are 25.4% and 26.1%) — flagged, and as a last resort that clause is dropped;
   - promise status: a point may say a promise is met / validated / delivered only if every promise it cites is
     "delivered" in the ledger — a "too_early" promise (e.g. H2 FY27, not started) has not been tested — and may say
     one failed / was missed only if a promise it cites is "missed" (an "at_risk" promise has not failed);
@@ -17,6 +19,7 @@ with the fixed verdicts or with the figures a sentence cites. These checks do, w
 """
 import re
 
+from ..grounding import numbers, ungrounded
 from . import periods
 
 # ---------- comparison wording ----------
@@ -401,19 +404,84 @@ def trim_unmet_promise_claim(point: str, refs: list[str], evidence: list[dict], 
     return kept, refs, evidence
 
 
+# ---------- every figure is a cited figure ----------
+
+def _cited_text(evidence: list[dict]) -> str:
+    """The numbers a point may quote: its cited figures (and the figures a cited signal is computed from) and the
+    words of its cited signals, guidance and ledger rows."""
+    parts = [str(f["value"]) for f in _figures(evidence)]
+    for e in evidence:
+        parts += [str(e[k]) for k in ("text", "statement", "target", "quote", "promise", "delivered") if e.get(k)]
+    return " ".join(parts)
+
+
+def cited_grounded(point: str, evidence: list[dict]) -> bool:
+    """Every number in the point is one of its cited figures (± rounding) — what the thesis's `grounded` flag asks."""
+    return not ungrounded(point, _cited_text(evidence))
+
+
+def grounding_issue(p: dict) -> str | None:
+    """A point the thesis builder marked ungrounded (a number it could not trace to the evidence): "pre-provision margin
+    stayed above 25%" cites 25.4% and 26.1% — true, but 25 is not a reported figure."""
+    if p.get("grounded") is not False:
+        return None
+    ev = p.get("evidence") or []
+    bad = ungrounded(p["point"], _cited_text(ev))
+    if not bad:
+        return "Cites no evidence." if not p.get("refs") else None
+    cited = ", ".join(f"{v:g}" for v in sorted({abs(float(f['value'])) for f in _figures(ev)})) or "none"
+    return (f"Quotes {', '.join(f'{n:g}' for n in bad)}, which is not among its cited figures ({cited}); quote a cited "
+            f"figure or drop that claim.")
+
+
+def trim_ungrounded_clause(point: str, refs: list[str], evidence: list[dict]) -> tuple[str, list[str], list[dict]] | None:
+    """Last resort for a point that, after its rewrite, still quotes a number that is not a cited figure: drop each
+    secondary clause that quotes one ("…, while pre-provision margin stayed above 25%") when the rest is a figure-based
+    claim whose every number is cited, and drop the cited facts whose figure the kept text no longer quotes (signals,
+    guidance and ledger references stay). Nothing is reworded or substituted. None when the main clause holds the
+    number, or nothing figure-based would remain."""
+    text = _cited_text(evidence)
+    if not ungrounded(point, text):
+        return None
+    body = point.strip().rstrip(".")
+    seps = list(_CLAUSE_SEP.finditer(body))
+    starts = [0] + [s.end() for s in seps]
+    ends = [s.start() for s in seps] + [len(body)]
+    clauses = [body[a:b] for a, b in zip(starts, ends)]
+    if ungrounded(clauses[0], text):
+        return None                                   # the main claim itself is not on a cited figure
+    kept = clauses[0] + "".join(seps[k - 1].group() + c for k, c in enumerate(clauses[1:], 1) if not ungrounded(c, text))
+    kept = kept.strip().rstrip(".,;") + "."
+    if not re.search(r"\d", kept) or ungrounded(kept, text):
+        return None
+    quoted = numbers(kept)
+    if len(refs) == len(evidence):
+        pairs = [(r, e) for r, e in zip(refs, evidence)
+                 if e.get("type") != "fact" or any(abs(abs(q) - abs(float(e["value"]))) <= 0.051 for q in quoted)]
+        if pairs:
+            refs, evidence = [r for r, _ in pairs], [e for _, e in pairs]
+    return kept, refs, evidence
+
+
 def repair_point(point: str, refs: list[str], evidence: list[dict], ledger_rows: dict[str, dict],
-                 latest: periods.FQ | None) -> tuple[str, list[str], list[dict]] | None:
+                 latest: periods.FQ | None, grounded: bool = True) -> tuple[str, list[str], list[dict]] | None:
     """Deterministic last-resort repair of a point still flagged after its rewrite, in this order: name each mislabelled
     figure's own period; move a cross-series trend onto the one series covering it; drop a clause that says an
-    untested / unmet promise was met, or a not-missed one failed. Every figure used is already cited. Returns the
-    repaired (point, refs, evidence) only if it then passes every narrative check — else None (the point stays
-    disputed). The caller re-verifies the repaired text."""
+    untested / unmet promise was met, or a not-missed one failed; for a point marked ungrounded, drop a secondary
+    clause quoting a number that is not a cited figure. Every figure used is already cited. Returns the repaired
+    (point, refs, evidence) only if it then passes every narrative check — else None (the point stays disputed). The
+    caller re-verifies the repaired text."""
     original = point
     point = _relabel_periods(point, evidence)
     if fixed := _use_one_series(point, refs, evidence):
         point, refs, evidence = fixed
     if promise_issue(point, refs, evidence, ledger_rows, latest):
         cut = trim_unmet_promise_claim(point, refs, evidence, ledger_rows, latest)
+        if not cut:
+            return None
+        point, refs, evidence = cut
+    if not grounded and not cited_grounded(point, evidence):
+        cut = trim_ungrounded_clause(point, refs, evidence)
         if not cut:
             return None
         point, refs, evidence = cut
@@ -434,7 +502,8 @@ def thesis_issues(thesis: dict, ledger: dict, latest: periods.FQ | None) -> dict
             ev = p.get("evidence") or []
             issues = [x for x in (comparison_issue(p["point"], ev), series_issue(p["point"], ev),
                                   period_label_issue(p["point"], ev),
-                                  promise_issue(p["point"], p.get("refs") or [], ev, led, latest)) if x]
+                                  promise_issue(p["point"], p.get("refs") or [], ev, led, latest),
+                                  grounding_issue(p)) if x]
             if issues:  # every reason goes to the rewrite, so fixing one doesn't leave the other
                 out[f"{side}{i + 1}"] = {"supported": False, "issue": " ".join(issues)}
     return out
