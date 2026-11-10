@@ -163,6 +163,7 @@ def build(calls: list[dict], facts: dict, latest_quarter: str) -> dict:
         _margin_guard(r, guidance, facts)
         _range_check(r, guidance, facts)
         _horizon_guard(r, guidance, latest_quarter)
+        _subject_guard(r, guidance)
         stances = {t["call"]: t for t in r.get("trajectory") or [] if t.get("call") in call_order}
         r["timeline"] = [{"call": c, **({"stance": stances[c]["stance"], "guidance_id": stances[c].get("guidance_id")}
                                          if c in stances else {"stance": "silent"})} for c in call_order]
@@ -277,24 +278,119 @@ def margin_quarter(fid: str, period: str | None) -> periods.FQ | None:
     return p.start if p and p.kind == "quarter" else None
 
 
+_Q = r"Q([1-4])(?:\s*(?:of\s+)?FY\s?'?(\d{2,4}))?"
+# A quarter is a comparison base only when the text compares with it: "Q2 run-rate", "Q2 level", "versus Q2",
+# "above our Q2 …", "exceed the Q2 …". A quarter merely mentioned ("Q3 was soft") or a deadline ("recover by Q4",
+# "in Q4") is not.
+_BASE_AFTER = re.compile(rf"\b{_Q}(?:['’]s)?\s+(?:margins?\s+)?(?:run[- ]?rates?|levels?|base(?:line)?|exit(?:\s+rate)?)\b", re.I)
+_BASE_BEFORE = re.compile(rf"\b(?:versus|vs\.?|than|above|over|exceed(?:s|ed|ing)?|beat(?:s|ing)?|surpass(?:es|ed|ing)?|"
+                          rf"ahead\s+of|below|under|compared\s+(?:with|to)|relative\s+to)\s+(?:the\s+|our\s+|its\s+|their\s+)?"
+                          rf"{_Q}\b", re.I)
+_SEQUENTIAL_WORD = re.compile(r"\bsequential(?:ly)?\b|\bquarter[- ]on[- ]quarter\b|\bq-?o-?q\b", re.I)
+
+
+def _base_quarter(r: dict, guidance: dict, promise: periods.Period) -> tuple[periods.FQ | None, str | None]:
+    """The quarter a single-quarter margin promise is compared with, when the promise explicitly names one.
+
+    "exceed our Q2 run-rate" → the latest Q2 before the promised quarter (said on a Q3 FY26 call about Q4 FY26: Q2
+    FY26); "above the Q2 FY26 level" → Q2 FY26; "sequential" → the quarter before. Only a comparison counts: a quarter
+    merely mentioned in the statement, a deadline ("recover by Q4") or the promised quarter itself is not a base, and a
+    base must come before the promised quarter. A promise with a numeric target (low / high) is a level promise —
+    the range check judges it, so no base is looked for. Returns (quarter, None); (None, None) if none is named;
+    (None, reason) if two different ones are.
+    """
+    items = [guidance[g] for g in r["guidance_ids"] if g in guidance]
+    if any(g.get("low") is not None or g.get("high") is not None for g in items):
+        return None, None
+    sources = [" ".join(str(g.get("target") or "") for g in items),
+               f"{r.get('subject') or ''} {r.get('promise') or ''}",
+               " ".join(str(g.get("statement") or "") for g in items)]
+    for text in sources:
+        found = set()
+        for m in [*_BASE_AFTER.finditer(text), *_BASE_BEFORE.finditer(text)]:
+            q = int(m.group(1))
+            if m.group(2):
+                fq = periods.FQ(int(m.group(2)) % 100, q)
+            elif q == promise.start.q:
+                continue  # the promised quarter itself
+            else:
+                fq = next(promise.start.shift(-k) for k in range(1, 4) if promise.start.shift(-k).q == q)
+            if fq < promise.start:  # a base is an earlier quarter; a later one is a deadline, not a comparison
+                found.add(fq)
+        if len(found) > 1:
+            return None, f"The promise names more than one comparison quarter ({', '.join(x.label for x in sorted(found))})."
+        if found:
+            return found.pop(), None
+    if any(_SEQUENTIAL_WORD.search(t) for t in sources[:2]):
+        return promise.start.prev(), None
+    return None, None
+
+
+def _margin_families(quarters: list, facts: dict) -> list[dict]:
+    """Per exact source family (in order of preference): {quarter: fact id} for the quarters asked about."""
+    return [{q: fid for fid, f in facts.items() if fid.startswith(prefix)
+             and (q := margin_quarter(fid, f["period"])) in quarters} for prefix in EXACT_MARGINS]
+
+
+def _cite_instead(r: dict, cited: dict, fid: str) -> None:
+    """Replace the row's cited quarterly margin(s) for the promised quarter with one exact fact id."""
+    swapped = list(dict.fromkeys(fid if f in cited else f for f in r["fact_ids"]))
+    if replaced := [f for f in r["fact_ids"] if f not in swapped]:
+        r["replaced_fact_ids"] = replaced
+    r["fact_ids"] = swapped
+
+
 def _margin_guard(r: dict, guidance: dict, facts: dict) -> None:
     """Quarterly margin comparisons are decided on exact margins, never on rounded OPM %.
 
-    Cited rounded margins are replaced by one exact family that covers every quarter cited. A comparison (two or more
-    quarters) with no such family is 'unverifiable'. A single-quarter promise to raise the margin above another
-    quarter's level ("exceed the Q2 run-rate", "sequential improvement") is then decided in code from the exact pair.
+    Cited rounded margins are replaced by one exact family that covers every quarter compared. When a single-quarter
+    promise names its comparison quarter ("exceed our Q2 run-rate") but only the promised quarter is cited, that
+    quarter's exact margin is attached from the same family — looked up, never estimated. A comparison with no exact
+    figure for every quarter is 'unverifiable'. A single-quarter promise to raise the margin above another quarter's
+    level is then decided in code from the exact pair.
     """
     cited = {fid: q for fid in r["fact_ids"] if (q := margin_quarter(fid, facts[fid]["period"]))}
     if not cited:
         return
     quarters = sorted(set(cited.values()))
-    families = [{q: fid for fid, f in facts.items() if fid.startswith(prefix)
-                 and (q := margin_quarter(fid, f["period"])) in quarters} for prefix in EXACT_MARGINS]
+    promise = _promise(r, guidance)
+    base_needed = None
+    if (len(quarters) == 1 and r["verdict"] in periods.OUTCOME and promise and promise.kind == "quarter"
+            and quarters[0] == promise.start):
+        base_needed, ambiguous = _base_quarter(r, guidance, promise)
+        if ambiguous:
+            # Judge nothing, but show the promised quarter's exact margin rather than a rounded one.
+            target = next((ids[promise.start] for ids in _margin_families([promise.start], facts) if promise.start in ids), None)
+            if target:
+                _cite_instead(r, cited, target)
+            r["downgraded_from"], r["verdict"] = r["verdict"], "unverifiable"
+            r["why"], r["delivered"] = ambiguous, "The comparison quarter could not be identified."
+            r["margin_check"] = {"result": "base_ambiguous", "target": promise.label}
+            return
+        if base_needed:
+            quarters = sorted({promise.start, base_needed})
+    families = _margin_families(quarters, facts)
     exact = next((ids for ids in families if len(ids) == len(quarters)), None)
+    if base_needed and not exact:
+        # The named comparison quarter has no exact margin in the sources: say so, judge nothing, and still show the
+        # promised quarter's exact figure if there is one.
+        target = next((ids[promise.start] for ids in families if promise.start in ids), None)
+        if target:
+            _cite_instead(r, cited, target)
+        shown = f"{fmt(facts[target]['value'], '%')} in {promise.label}" if target else f"the {promise.label} margin"
+        r["downgraded_from"], r["verdict"] = r["verdict"], "unverifiable"
+        r["why"] = (f"No exact margin for {base_needed.label} in the sources, so {shown} can't be compared with the "
+                    f"{base_needed.label} level.")
+        r["delivered"] = f"No exact {base_needed.label} margin figure to compare with."
+        r["margin_check"] = {"result": "base_missing", "target": promise.label, "base": base_needed.label}
+        return
     if exact:
         swapped = list(dict.fromkeys(exact[cited[fid]] if fid in cited else fid for fid in r["fact_ids"]))
         if replaced := [fid for fid in r["fact_ids"] if fid not in swapped]:
             r["replaced_fact_ids"] = replaced
+        if base_needed and exact[base_needed] not in swapped:
+            swapped.append(exact[base_needed])
+            r["attached_fact_ids"] = [exact[base_needed]]
         r["fact_ids"] = swapped
     if len(quarters) < 2 or r["verdict"] not in periods.OUTCOME:
         return
@@ -308,7 +404,6 @@ def _margin_guard(r: dict, guidance: dict, facts: dict) -> None:
         r["delivered"] = "No exact margin figure in the sources for the quarters compared."
         r["margin_check"] = {"result": "rounded_only", "quarters": [q.label for q in quarters]}
         return
-    promise = _promise(r, guidance)
     if not promise or promise.kind != "quarter" or len(quarters) != 2 or promise.start not in exact:
         return
     said = " ".join(str(x or "") for x in (r.get("subject"), r.get("promise"),
@@ -326,6 +421,38 @@ def _margin_guard(r: dict, guidance: dict, facts: dict) -> None:
         r["why"] = (f"Exact EBITDA margin: {fmt(t['value'], '%')} in {promise.label} vs {fmt(b['value'], '%')} in "
                     f"{base_q.label} — {'above' if above else 'not above'} the {base_q.label} level.")
         r["delivered"] = f"EBITDA margin {fmt(t['value'], '%')} in {promise.label} ({fmt(b['value'], '%')} in {base_q.label})."
+
+
+# A fiscal label in a title, matched whole — including year ranges ("FY26-27", "FY2026–27"), which mean the later year.
+_FY_LABEL = r"FY\s?'?\d{2,4}(?:\s?[-–/]\s?'?\d{2,4})?"
+_PERIOD_LABEL = re.compile(rf"\b(?:(?:Q[1-4]|H[12])\s?)?{_FY_LABEL}\b", re.I)
+
+
+def _overlap(a: periods.Period, b: periods.Period) -> bool:
+    return a.start <= b.end and b.start <= a.end
+
+
+def _subject_guard(r: dict, guidance: dict) -> None:
+    """The row's title must name a period the promise is about. A model-written subject such as "Q2 FY27 sequential
+    EBITDA margin improvement" for a promise only ever about H2 FY27 is retitled "H2 FY27 …".
+
+    Left alone: a title with no fiscal label; one whose period overlaps ANY guidance item in the row (an original
+    period the promise was first made for, or a comparison period alongside it); and every goalposts_moved / dropped
+    row, whose title naming the original period is the point. Only the label changes — never the verdict."""
+    if r.get("verdict") in ("goalposts_moved", "dropped"):
+        return
+    promise = _promise(r, guidance)
+    subject = r.get("subject") or ""
+    named = [(m, periods.resolve(m.group(0), None)) for m in _PERIOD_LABEL.finditer(subject)]
+    named = [(m, p) for m, p in named if p]
+    if not promise or not named:
+        return
+    said = [p for g in r["guidance_ids"] if g in guidance and (p := periods.promise_period(guidance[g]))] or [promise]
+    if any(_overlap(p, g) for _, p in named for g in said):
+        return
+    m = named[0][0]
+    r["subject_corrected_from"] = subject
+    r["subject"] = subject[:m.start()] + promise.label + subject[m.end():]
 
 
 def _horizon_guard(r: dict, guidance: dict, latest_quarter: str) -> None:
