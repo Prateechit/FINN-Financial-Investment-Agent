@@ -141,6 +141,20 @@ function Evidence({ items }: { items: ThesisPoint['evidence'] }) {
   )
 }
 
+// Opening a memo asks the server to refresh it if stale (POST). Within a few minutes in this tab, re-opening it — or
+// React StrictMode's double effect in development — reads it instead (GET), after any request still in flight. The
+// server runs at most one build per company either way; the Rebuild button is the explicit refresh.
+const REOPEN_MS = 5 * 60_000
+const opened = new Map<string, { at: number; req: Promise<Research> }>()
+function openMemo(symbol: string): Promise<Research> {
+  const o = opened.get(symbol)
+  if (o && Date.now() - o.at < REOPEN_MS) return o.req.then(() => api<Research>(`/api/research/${symbol}`))
+  const req = api<Research>(`/api/research/${symbol}`, { method: 'POST' })
+  opened.set(symbol, { at: Date.now(), req })
+  req.catch(() => opened.delete(symbol))  // a failed request doesn't block the next open
+  return req
+}
+
 const NAV = [['ledger', 'Promise Ledger'], ['thesis', 'Bull / Bear'], ['snapshot', 'Snapshot'], ['trajectory', 'Trajectory'], ['balance', 'Balance sheet'], ['cash', 'Cash'], ['sources', 'Sources']]
 
 export default function Memo({ symbol, go }: { symbol: string; go: (r: string) => void }) {
@@ -151,7 +165,7 @@ export default function Memo({ symbol, go }: { symbol: string; go: (r: string) =
 
   useEffect(() => {
     setData(undefined)
-    api<Research>(`/api/research/${symbol}`, { method: 'POST' }).then(setData)
+    openMemo(symbol).then(setData)
       .catch((e) => setData({ symbol, status: 'error', stage: '', updated: '', errors: [String(e.message)], sections: {} }))
   }, [symbol])
   useInterval(() => {

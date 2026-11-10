@@ -39,6 +39,18 @@ def _sequential_facts(fin: dict) -> dict:
     return {k: fin["facts"][k] for k in ids if k in fin["facts"]}
 
 
+def _quotes(point: str, fid: str, fact: dict) -> bool:
+    """Does the sentence state this fact — its value and its period (e.g. "2% in FY24" for calc.roa.Mar 2024)?"""
+    value = fact.get("value")
+    if not isinstance(value, (int, float)):
+        return False
+    numbers = {round(float(x.replace(",", "")), 2) for x in re.findall(r"(?<![\w.])\d[\d,]*(?:\.\d+)?", point)}
+    if round(float(value), 2) not in numbers:
+        return False
+    labels = {str(fact.get("period") or ""), periods.tag(fid, fact.get("period")) or ""} - {""}
+    return any(re.search(rf"\b{re.escape(lbl)}\b", point, re.I) for lbl in labels)
+
+
 def _guidance_line(k: str, g: dict, verdict: str | None) -> str:
     p = periods.promise_period(g)
     about = f"period {p.label}" if p else f"horizon {g.get('horizon')}"
@@ -93,6 +105,13 @@ def build(fin: dict, calls: list[dict], ledger: dict, feedback: list[str] | None
             if r.startswith(("X.", "calc.Q.ebitda_margin.")):
                 base, period = r.rsplit(".", 1)
                 refs += [k for k in key_facts if k.rsplit(".", 1)[0] == base and k != r and k not in refs]
+        # A figure the sentence quotes must be among its evidence: "ROA declined from 2% in FY24 to 1.7% in FY26" citing
+        # only the FY26 fact also cites the FY24 one — the same metric, only when the sentence names both its value
+        # and its period. Nothing is looked up by value alone.
+        for r in list(refs):
+            if r in key_facts and "." in r:
+                base = r.rsplit(".", 1)[0]
+                refs += [k for k, v in key_facts.items() if k not in refs and k.rsplit(".", 1)[0] == base and _quotes(point, k, v)]
         # Something only an analyst said is a claim; if the sentence doesn't attribute it, attribute it.
         if any(r.startswith("A") and r[1:].isdigit() for r in refs) and not re.search(r"analyst", point, re.I):
             point = point.rstrip(".") + " (raised by analysts on the call)."
