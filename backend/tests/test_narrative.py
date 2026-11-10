@@ -788,3 +788,48 @@ def test_generator_and_verifier_prompts_state_the_series_and_period_rules():
     assert "an FY26 figure\nis \"FY26\", not a month or a quarter" in thesis.SYSTEM
     assert "labelled with a period other than its own" in verify.SYSTEM
     assert verify._evidence_text({"type": "signal", "text": "x"}) == "Computed signal (standardised statements): x"
+
+
+# ---------- one metric cited both as a level and as a growth rate ----------
+# Production rebuild of HDFCBANK (10 Nov 2026, 18:55 UTC) failed with "TypeError: '<' not supported between instances of
+# 'NoneType' and 'str'": X.PAT.Q2 FY27 is keyed ("pat", None) and X.pat_yoy.Q2 FY27 ("pat", "yoy"), and the series check
+# sorted those keys. A point may cite both; the check must neither crash nor flag a single series.
+
+def _level(fid, value, period, label):
+    return {"type": "fact", "id": fid, "label": label, "value": value, "unit": "₹ Cr", "period": period}
+
+
+PAT_LEVEL = _level("X.PAT.Q2 FY27", 18641.3, "Q2 FY27", "PAT (exchange filing)")
+REV_LEVEL = _level("X.Revenue.Q2 FY27", 87460.0, "Q2 FY27", "Total income (exchange filing)")
+PAT_MARGINS = [_fact("X.PAT margin.Q2 FY27", 16.0, "Q2 FY27", "PAT margin (exchange filing)"),
+               _fact("X.PAT margin.Q2 FY26", 16.5, "Q2 FY26", "PAT margin (exchange filing)")]
+
+
+@pytest.mark.parametrize("point,growth", [
+    ("PAT rose 5.6% YoY to ₹18,641 Cr in Q2 FY27, while PAT margin slipped to 16.0% from 16.5%.",
+     _fact("X.pat_yoy.Q2 FY27", 5.6, "Q2 FY27", "PAT growth YoY (exchange filing)")),
+    ("PAT rose 5.7% QoQ to ₹18,641 Cr in Q2 FY27, while PAT margin slipped to 16.0% from 16.5%.",
+     _fact("calc.Q.pat_qoq.Sep 2026", 5.7, "Sep 2026", "PAT growth QoQ (sequential)")),
+], ids=["level+yoy", "level+qoq"])
+def test_a_metric_cited_as_a_level_and_a_growth_rate_does_not_crash_the_checks(point, growth):
+    evidence = [PAT_LEVEL, growth, *PAT_MARGINS]
+    refs = [e["id"] for e in evidence]
+    assert narrative._metric(PAT_LEVEL["id"]) == ("pat", None) and narrative._metric(growth["id"])[0] == "pat"
+    assert narrative.series_issue(point, evidence) is None
+    assert narrative._use_one_series(point, refs, evidence) is None
+    assert narrative.repair_point(point, refs, evidence, {}, LATEST) is None          # nothing to repair
+    th = {"bull": [{"point": point, "refs": refs, "evidence": evidence, "grounded": True}], "bear": []}
+    assert narrative.thesis_issues(th, {"rows": []}, LATEST) == {}
+
+
+def test_a_level_figure_beside_a_cross_series_trend_still_flags_and_repairs_it():
+    """Negative control: adding the same metric's level figure must not hide or change a genuine cross-series trend."""
+    evidence = [*BULL1_0751["evidence"], REV_LEVEL]
+    refs = [*BULL1_0751["refs"], REV_LEVEL["id"]]
+    assert narrative._metric(REV_LEVEL["id"]) == ("revenue", None)
+    assert narrative.series_issue(BULL1_0751["point"], evidence) == \
+        narrative.series_issue(BULL1_0751["point"], BULL1_0751["evidence"])
+    assert narrative.series_issue(BULL1_0751["point"], evidence).startswith("Mixes two revenue growth (YOY) series")
+    point, new_refs, _ = narrative.repair_point(BULL1_0751["point"], refs, evidence, LED_HD, LATEST)
+    assert point == "Revenue growth accelerating, YoY 9.4% and QoQ 5% in Q2 FY27, up from 2.4% YoY earlier."
+    assert "X.revenue_yoy.Q2 FY27" not in new_refs and REV_LEVEL["id"] in new_refs
