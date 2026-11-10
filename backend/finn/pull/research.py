@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from ..db import LLMCall, kv_get, kv_set, now, session
 from ..llm import LLMUnavailable, available
 from ..push import results
-from . import financials, ledger, thesis, transcripts, verify
+from . import financials, ledger, narrative, periods, thesis, transcripts, verify
 
 _running: set[str] = set()
 _lock = threading.Lock()
@@ -67,8 +67,20 @@ def _add_results_facts(sym: str, fin: dict) -> None:
 
 
 def _verify(fin: dict, calls: list[dict], secs: dict) -> None:
-    """Second-model check. Unsupported thesis points trigger one rewrite; anything still unsupported is flagged."""
-    res = verify.check(verify.claims_for(secs["thesis"], secs["ledger"]))
+    """Second-model check plus FINN's own narrative checks (comparison wording, promise status). Unsupported thesis
+    points trigger one rewrite; anything still unsupported is flagged."""
+    q = fin["trajectory"]["quarterly"]
+    latest = periods.from_calendar(q[-1]["period"]) if q else None
+
+    def judge(th: dict, led: dict) -> tuple[dict, bool]:
+        res = verify.check(verify.claims_for(th, led))
+        ran = bool(res)
+        for k, v in narrative.thesis_issues(th, secs["ledger"], latest).items():
+            if res.get(k, {"supported": True})["supported"]:  # the verifier's own objection, if any, stands
+                res[k] = v
+        return res, ran
+
+    res, model_ran = judge(secs["thesis"], secs["ledger"])
     if not res:
         secs["verification"] = {"status": "skipped"}
         return
@@ -77,19 +89,21 @@ def _verify(fin: dict, calls: list[dict], secs: dict) -> None:
     rewritten = False
     if bad:
         secs["thesis"] = thesis.build(fin, calls, secs["ledger"], feedback=bad)
-        res.update({k: v for k, v in verify.check(verify.claims_for(secs["thesis"], {"rows": []})).items()})
+        for k in [k for k in res if k.startswith(("bull", "bear"))]:  # judge the rewrite afresh, not by the draft
+            del res[k]
+        res.update(judge(secs["thesis"], {"rows": []})[0])
         rewritten = True
     for side in ("bull", "bear"):
         for i, p in enumerate(secs["thesis"][side]):
             r = res.get(f"{side}{i + 1}", {"supported": True})
-            p["verified"], p["issue"] = r["supported"], r["issue"] or None
+            p["verified"], p["issue"] = r["supported"], r.get("issue") or None
     for i, row in enumerate(secs["ledger"].get("rows", [])):
         r = res.get(f"L{i + 1}")
         if r:
             row["verified"], row["issue"] = r["supported"], r["issue"] or None
     flagged = sum(1 for p in secs["thesis"]["bull"] + secs["thesis"]["bear"] if p.get("verified") is False) +         sum(1 for r in secs["ledger"].get("rows", []) if r.get("verified") is False)
-    secs["verification"] = {"status": "done", "checked": len(res), "flagged": flagged, "rewrote_thesis": rewritten,
-                            "initially_unsupported": bad}
+    secs["verification"] = {"status": "done" if model_ran else "narrative_only", "checked": len(res), "flagged": flagged,
+                            "rewrote_thesis": rewritten, "initially_unsupported": bad}
 
 
 def build(sym: str, force: bool = False) -> dict:

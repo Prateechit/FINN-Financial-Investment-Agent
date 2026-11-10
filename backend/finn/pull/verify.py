@@ -16,6 +16,9 @@ are unsupported unless the evidence states them or they follow necessarily from 
 attributes to a reclassification is not evidence of weaker demand). Paraphrase and plain summarising are fine.
 Periods: India's fiscal year runs April–March (Q4 FY26 = Jan–Mar 2026; Q2 FY27 = Jul–Sep 2026). Every figure is
 tagged with its fiscal period; a claim about one period that rests on figures from another period is unsupported.
+"Sequential" / "quarter-on-quarter" means against the immediately preceding quarter; a comparison with the same
+quarter a year earlier (Q2 FY27 vs Q2 FY26) is year-on-year, so calling it sequential is unsupported. A claim that a
+promise was met / validated / delivered is unsupported unless its promise-ledger verdict is "delivered".
 Do not use outside knowledge.
 Return JSON: {"checks":[{"id":"<claim id>","supported":true|false,"issue":"if false: max 20 words on what is wrong"}]}"""
 
@@ -31,7 +34,8 @@ def _evidence_text(e: dict) -> str:
     if t == "guidance" or "statement" in e:
         p = periods.promise_period(e) if e.get("call") else None
         about = f" about {p.label}" if p else ""
-        return f"Management said ({e.get('call')} call){about}: \"{e.get('statement')}\""
+        status = f" [promise-ledger verdict: {e['ledger_verdict']}]" if e.get("ledger_verdict") else ""
+        return f"Management said ({e.get('call')} call){about}: \"{e.get('statement')}\"{status}"
     if t == "analyst":
         return f"An analyst asked: \"{e.get('quote')}\""
     if t == "ledger":

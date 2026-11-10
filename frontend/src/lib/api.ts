@@ -63,7 +63,7 @@ export interface LedgerRow {
   verdict: Verdict; why: string; grounded: boolean; downgraded_from?: string
   timeline: { call: string; stance: string; guidance_id?: string }[]; evidence: Guidance[]; facts: Fact[]
 }
-export interface ThesisPoint { point: string; refs: string[]; grounded: boolean; evidence: (Record<string, unknown> & { type: string })[] }
+export interface ThesisPoint { point: string; refs: string[]; grounded: boolean; verified?: boolean; issue?: string | null; evidence: (Record<string, unknown> & { type: string })[] }
 export interface Research {
   symbol: string; status: 'running' | 'done' | 'partial' | 'error'; stage: string; updated: string; errors: string[]
   usage?: { calls: number; cache_hits: number; tokens_in: number; tokens_out: number; models: string[] }

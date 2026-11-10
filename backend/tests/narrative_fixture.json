@@ -1,0 +1,986 @@
+{
+ "TATATECH": {
+  "latest_quarter": "Sep 2026",
+  "credibility": "Management reliably hit sequential revenue and margin targets but missed the FY27 operating‑margin goal; many qualitative promises lack measurable data, limiting overall credibility.",
+  "ledger_rows": [
+   {
+    "subject": "FY27 operating margin run rate",
+    "verdict": "at_risk",
+    "guidance_ids": [
+     "G3.2"
+    ],
+    "evidence": [
+     {
+      "id": "G3.2",
+      "call": "Q4 FY26",
+      "subject": "operating margin run rate",
+      "target": "exceeds 18%",
+      "horizon": "exit FY27",
+      "period": "FY27",
+      "statement": "We continue to expect double-digit organic top-line growth, excluding any inorganic contribution from ES-Tec, and we expect to exit FY27 with an operating margin run rate that exceeds 18%"
+     }
+    ]
+   },
+   {
+    "subject": "Q4 FY26 sequential revenue growth",
+    "verdict": "delivered",
+    "guidance_ids": [
+     "G2.1"
+    ],
+    "evidence": [
+     {
+      "id": "G2.1",
+      "call": "Q3 FY26",
+      "subject": "sequential revenue growth",
+      "target": "in excess of 10%",
+      "horizon": "Q4",
+      "period": "Q4 FY26",
+      "statement": "For Q4, we expect sequential revenue growth in excess of 10%, and despite the impacts of new labour codes, deliver EBITDA Margins that exceed our Q2 run-rate."
+     }
+    ]
+   },
+   {
+    "subject": "Q4 FY26 EBITDA margin",
+    "verdict": "delivered",
+    "guidance_ids": [
+     "G2.2"
+    ],
+    "evidence": [
+     {
+      "id": "G2.2",
+      "call": "Q3 FY26",
+      "subject": "EBITDA margin",
+      "target": "exceed our Q2 run-rate",
+      "horizon": "Q4",
+      "period": "Q4 FY26",
+      "statement": "For Q4, we expect sequential revenue growth in excess of 10%, and despite the impacts of new labour codes, deliver EBITDA Margins that exceed our Q2 run-rate."
+     }
+    ]
+   },
+   {
+    "subject": "FY27 revenue growth",
+    "verdict": "on_track",
+    "guidance_ids": [
+     "G1.3",
+     "G2.3",
+     "G3.1",
+     "G3.3",
+     "G5.1"
+    ],
+    "evidence": [
+     {
+      "id": "G1.3",
+      "call": "Q2 FY26",
+      "subject": "growth in FY27",
+      "target": "double-digit growth",
+      "horizon": "FY27",
+      "period": "FY27",
+      "statement": "I think at this point in time, our objective and our target will be to ensure that the order book and the momentum that we take into the next fiscal year will provide a platform for double-digit growth in FY27."
+     },
+     {
+      "id": "G2.3",
+      "call": "Q3 FY26",
+      "subject": "revenue growth for FY27",
+      "target": "double-digit",
+      "horizon": "FY27",
+      "period": "FY27",
+      "statement": "We are targeting double-digit growth in FY27"
+     },
+     {
+      "id": "G3.1",
+      "call": "Q4 FY26",
+      "subject": "organic top-line growth",
+      "target": "double-digit",
+      "horizon": "FY27",
+      "period": "FY27",
+      "statement": "We continue to expect double-digit organic top-line growth, excluding any inorganic contribution from ES-Tec, and we expect to exit FY27 with an operating margin run rate that exceeds 18%"
+     },
+     {
+      "id": "G3.3",
+      "call": "Q4 FY26",
+      "subject": "organic revenue growth",
+      "target": "double-digit",
+      "horizon": "FY27",
+      "period": "FY27",
+      "statement": "Looking ahead, we remain confident in our outlook and continue to guide for double-digit organic revenue growth in FY27, alongside meaningful bottom-line expansion"
+     },
+     {
+      "id": "G5.1",
+      "call": "Q2 FY27",
+      "subject": "consolidated revenue",
+      "target": "strong double-digit growth",
+      "horizon": "FY27",
+      "period": "FY27",
+      "statement": "Based on our first-half performance, continued program ramp-ups, and healthy pipeline conversion, we remain confident in maintaining strong double-digit growth for FY27."
+     }
+    ]
+   },
+   {
+    "subject": "H2 FY27 EBITDA margin improvement",
+    "verdict": "too_early",
+    "guidance_ids": [
+     "G5.2"
+    ],
+    "evidence": [
+     {
+      "id": "G5.2",
+      "call": "Q2 FY27",
+      "subject": "operating EBITDA margin",
+      "target": "sequential margin improvement",
+      "horizon": "H2 FY27",
+      "period": "H2 FY27",
+      "statement": "Against this backdrop, we expect to deliver sequential margin improvement through disciplined execution and productivity initiatives."
+     }
+    ]
+   },
+   {
+    "subject": "Aerospace FY26 revenue",
+    "verdict": "unverifiable",
+    "guidance_ids": [
+     "G2.4"
+    ],
+    "evidence": [
+     {
+      "id": "G2.4",
+      "call": "Q3 FY26",
+      "subject": "Aerospace revenue",
+      "target": "close to $40 million",
+      "horizon": "FY26",
+      "period": "FY26",
+      "statement": "We expect this business to reach close to $40 million in FY26. Importantly, we see strong visibility in the pipeline and anticipate this momentum to continue."
+     }
+    ]
+   },
+   {
+    "subject": "DSO normalization",
+    "verdict": "unverifiable",
+    "guidance_ids": [
+     "G1.4",
+     "G2.5"
+    ],
+    "evidence": [
+     {
+      "id": "G1.4",
+      "call": "Q2 FY26",
+      "subject": "DSOs normalization",
+      "target": "revert to historical range",
+      "horizon": "next couple of quarters",
+      "period": null,
+      "statement": "That said, we expect our DSOs to gradually revert to their historical range over the next couple of quarters as these temporary factors normalize and collection cycles stabilize."
+     },
+     {
+      "id": "G2.5",
+      "call": "Q3 FY26",
+      "subject": "DSO",
+      "target": "return to historical range",
+      "horizon": "next 1-2 quarters",
+      "period": null,
+      "statement": "We expect DSO to gradually return to its historical range over the next one to two quarters as these temporary factors normalize."
+     }
+    ]
+   }
+  ],
+  "thesis": {
+   "bull": [
+    {
+     "point": "Revenue growth accelerated to 28.4% YoY in Q2 FY27, supporting management's strong double-digit FY27 guidance.",
+     "refs": [
+      "S3",
+      "G5.1",
+      "X.revenue_yoy.Q2 FY27"
+     ],
+     "evidence": [
+      {
+       "type": "signal",
+       "tone": "good",
+       "text": "Revenue growth accelerating: 3.7% YoY (Dec 2025) → 28.4% (Sep 2026)."
+      },
+      {
+       "type": "guidance",
+       "id": "G5.1",
+       "call": "Q2 FY27",
+       "subject": "consolidated revenue",
+       "target": "strong double-digit growth",
+       "horizon": "FY27",
+       "period": "FY27",
+       "statement": "Based on our first-half performance, continued program ramp-ups, and healthy pipeline conversion, we remain confident in maintaining strong double-digit growth for FY27."
+      },
+      {
+       "type": "fact",
+       "id": "X.revenue_yoy.Q2 FY27",
+       "label": "Revenue growth YoY (exchange filing)",
+       "value": 28.4,
+       "unit": "%",
+       "period": "Q2 FY27"
+      }
+     ]
+    },
+    {
+     "point": "EBITDA margin improved sequentially to 16.1% in Q2 FY27, validating the promise of sequential margin improvement.",
+     "refs": [
+      "L3",
+      "X.EBITDA margin.Q2 FY27",
+      "G5.2",
+      "X.EBITDA margin.Q2 FY26"
+     ],
+     "evidence": [
+      {
+       "type": "ledger",
+       "subject": "Q4 FY26 EBITDA margin",
+       "verdict": "delivered",
+       "promise": "EBITDA margin in Q4 FY26 to exceed Q2 FY26 run‑rate",
+       "why": "Margin higher than Q2 baseline"
+      },
+      {
+       "type": "fact",
+       "id": "X.EBITDA margin.Q2 FY27",
+       "label": "EBITDA margin (exchange filing)",
+       "value": 16.1,
+       "unit": "%",
+       "period": "Q2 FY27"
+      },
+      {
+       "type": "guidance",
+       "id": "G5.2",
+       "call": "Q2 FY27",
+       "subject": "operating EBITDA margin",
+       "target": "sequential margin improvement",
+       "horizon": "H2 FY27",
+       "period": "H2 FY27",
+       "statement": "Against this backdrop, we expect to deliver sequential margin improvement through disciplined execution and productivity initiatives."
+      },
+      {
+       "type": "fact",
+       "id": "X.EBITDA margin.Q2 FY26",
+       "label": "EBITDA margin (exchange filing)",
+       "value": 15.7,
+       "unit": "%",
+       "period": "Q2 FY26"
+      }
+     ]
+    },
+    {
+     "point": "FY27 YTD revenue growth of 31% is well above the double-digit target, confirming the on-track status.",
+     "refs": [
+      "L4",
+      "calc.ytd_revenue_growth"
+     ],
+     "evidence": [
+      {
+       "type": "ledger",
+       "subject": "FY27 revenue growth",
+       "verdict": "on_track",
+       "promise": "double-digit revenue growth in FY27",
+       "why": "YTD growth already well above double‑digit target"
+      },
+      {
+       "type": "fact",
+       "id": "calc.ytd_revenue_growth",
+       "label": "Revenue growth FY27 YTD (2Q) vs prior-year period",
+       "value": 31.0,
+       "unit": "%",
+       "period": "FY27 YTD (2Q)"
+      }
+     ]
+    }
+   ],
+   "bear": [
+    {
+     "point": "PAT margin compressed from 12.5% to 10.1% in Q2 FY27, with PAT growing only 3.6% YoY.",
+     "refs": [
+      "X.PAT margin.Q2 FY27",
+      "X.pat_yoy.Q2 FY27",
+      "X.PAT margin.Q2 FY26"
+     ],
+     "evidence": [
+      {
+       "type": "fact",
+       "id": "X.PAT margin.Q2 FY27",
+       "label": "PAT margin (exchange filing)",
+       "value": 10.1,
+       "unit": "%",
+       "period": "Q2 FY27"
+      },
+      {
+       "type": "fact",
+       "id": "X.pat_yoy.Q2 FY27",
+       "label": "PAT growth YoY (exchange filing)",
+       "value": 3.6,
+       "unit": "%",
+       "period": "Q2 FY27"
+      },
+      {
+       "type": "fact",
+       "id": "X.PAT margin.Q2 FY26",
+       "label": "PAT margin (exchange filing)",
+       "value": 12.5,
+       "unit": "%",
+       "period": "Q2 FY26"
+      }
+     ]
+    },
+    {
+     "point": "Operating margin compressed from 19.0% in FY23 to 15.0% in FY26, indicating persistent structural margin erosion.",
+     "refs": [
+      "S1"
+     ],
+     "evidence": [
+      {
+       "type": "signal",
+       "tone": "bad",
+       "text": "Operating margin compressed from 19.0% (FY23) to 15.0% (FY26)."
+      }
+     ]
+    },
+    {
+     "point": "Debt/equity rose from 0.07x to 0.29x, while 5-year CFO covered only 72% of reported profit.",
+     "refs": [
+      "S5",
+      "S4",
+      "calc.de.Sep 2026"
+     ],
+     "evidence": [
+      {
+       "type": "signal",
+       "tone": "bad",
+       "text": "Debt/equity moved from 0.07x (Mar 2025) to 0.29x (Sep 2026)."
+      },
+      {
+       "type": "signal",
+       "tone": "neutral",
+       "text": "Over 5 years, operating cash flow was 72% of reported profit."
+      },
+      {
+       "type": "fact",
+       "id": "calc.de.Sep 2026",
+       "label": "Debt / equity",
+       "value": 0.29,
+       "unit": "x",
+       "period": "Sep 2026"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "DIXON": {
+  "latest_quarter": "Sep 2026",
+  "credibility": "Management shows strong visibility on revenue growth and scaling, but capex targets and operating margins show signs of misses or pressure. Margin guidance appears optimistic given declining actual profitability trends.",
+  "ledger_rows": [
+   {
+    "subject": "FY26 capex",
+    "verdict": "missed",
+    "guidance_ids": [
+     "G1.5",
+     "G2.2"
+    ],
+    "evidence": [
+     {
+      "id": "G1.5",
+      "call": "Q2 FY26",
+      "subject": "group capex",
+      "target": "₹550 crore run-rate",
+      "horizon": "H2 FY26",
+      "statement": "Sonali, we have done a CAPEX of 550-odd crores in the first 6months. Broadly, that should be the going run rate for the next 6 months as well."
+     },
+     {
+      "id": "G2.2",
+      "call": "Q3 FY26",
+      "subject": "overall fiscal capex",
+      "target": "₹1,100 - 1,200 crore",
+      "horizon": "FY26",
+      "statement": "First 9 months, the capex outgo is INR720 crores. And we feel that in the overall fiscal, it should be somewhere between INR1,100 crores, INR1,200 crores."
+     }
+    ]
+   },
+   {
+    "subject": "Operating margins expansion",
+    "verdict": "at_risk",
+    "guidance_ids": [
+     "G3.3",
+     "G4.2"
+    ],
+    "evidence": [
+     {
+      "id": "G3.3",
+      "call": "Q4 FY26",
+      "subject": "operating margin after component play deployment",
+      "target": "40-50 bps expansion",
+      "horizon": "FY28",
+      "statement": "But finally, when the component play is completely deployed, there will be a margin expansion from last year's number by almost 40 bps, 50 bps."
+     },
+     {
+      "id": "G4.2",
+      "call": "Q1 FY27",
+      "subject": "operating margins",
+      "target": "margin expansion / restoration",
+      "horizon": "FY28",
+      "statement": "Dixon's strategic pivot towards component backward integration... positions the company to drive absolute profit growth and restore operating margins from the next fiscal of '27, '28."
+     }
+    ]
+   },
+   {
+    "subject": "FY27 revenue growth and target",
+    "verdict": "on_track",
+    "guidance_ids": [
+     "G3.1",
+     "G3.2"
+    ],
+    "evidence": [
+     {
+      "id": "G3.1",
+      "call": "Q4 FY26",
+      "subject": "consolidated revenue without Vivo",
+      "target": "15-17%",
+      "horizon": "FY27",
+      "statement": "We feel that without the Vivo also, the company will keep growing at almost 15% to 17%."
+     },
+     {
+      "id": "G3.2",
+      "call": "Q4 FY26",
+      "subject": "consolidated revenue without Vivo",
+      "target": "₹56,000 crores",
+      "horizon": "FY27",
+      "statement": "Next year, we are targeting almost INR56,000 crores without the Vivo numbers, and mobile volume being flat."
+     }
+    ]
+   },
+   {
+    "subject": "FY26 mobile volume",
+    "verdict": "unverifiable",
+    "guidance_ids": [
+     "G1.3"
+    ],
+    "evidence": [
+     {
+      "id": "G1.3",
+      "call": "Q2 FY26",
+      "subject": "mobile phone volume",
+      "target": "40-42 million",
+      "horizon": "FY26",
+      "statement": "Overall, we are sharing with you. It is going to be 42-odd million in this particular festival."
+     }
+    ]
+   },
+   {
+    "subject": "FY26 telecom revenue",
+    "verdict": "unverifiable",
+    "guidance_ids": [
+     "G1.6",
+     "G2.4"
+    ],
+    "evidence": [
+     {
+      "id": "G1.6",
+      "call": "Q2 FY26",
+      "subject": "telecom segment revenue",
+      "target": "₹4,800 crore",
+      "horizon": "FY26",
+      "statement": "So, Aditya, if you look at the numbers, we grew from INR 700 crores to and this year, we are going to be almost at INR 4,800 crores."
+     },
+     {
+      "id": "G2.4",
+      "call": "Q3 FY26",
+      "subject": "telecom business revenue",
+      "target": "close to ₹5,200 crore",
+      "horizon": "FY26",
+      "statement": "Our telecom business is doing extremely well. This year, we should have revenues close to INR5,200 crores."
+     }
+    ]
+   },
+   {
+    "subject": "FY27 total capex",
+    "verdict": "unverifiable",
+    "guidance_ids": [
+     "G5.3"
+    ],
+    "evidence": [
+     {
+      "id": "G5.3",
+      "call": "Q2 FY27",
+      "subject": "total FY27 capex",
+      "target": "₹1,200 crore",
+      "horizon": "FY27",
+      "statement": "INR 700-odd crores is what we have done in first 6 months, and we will likely to do closer to INR 500 crores. So we should close the year with INR 1,200 crores."
+     }
+    ]
+   }
+  ],
+  "thesis": {
+   "bull": [
+    {
+     "point": "Five-year revenue CAGR of 49.9% and PAT CAGR of 59.4% demonstrate sustained, high-growth compounding over the long term.",
+     "refs": [
+      "S1",
+      "calc.revenue_cagr_5y",
+      "calc.pat_cagr_5y"
+     ],
+     "evidence": [
+      {
+       "type": "signal",
+       "tone": "good",
+       "text": "5-year revenue CAGR 49.9% vs PAT CAGR 59.4% — profits outgrew sales."
+      },
+      {
+       "type": "fact",
+       "id": "calc.revenue_cagr_5y",
+       "label": "Revenue CAGR 5y",
+       "value": 49.9,
+       "unit": "%",
+       "period": "FY21–FY26"
+      },
+      {
+       "type": "fact",
+       "id": "calc.pat_cagr_5y",
+       "label": "PAT CAGR 5y",
+       "value": 59.4,
+       "unit": "%",
+       "period": "FY21–FY26"
+      }
+     ]
+    },
+    {
+     "point": "Cumulative five-year operating cash flow reached 122% of reported profit, confirming strong conversion of earnings into actual cash.",
+     "refs": [
+      "S5",
+      "calc.cfo_pat_5y"
+     ],
+     "evidence": [
+      {
+       "type": "signal",
+       "tone": "good",
+       "text": "Over 5 years, operating cash flow was 122% of reported profit — profits are converting to cash."
+      },
+      {
+       "type": "fact",
+       "id": "calc.cfo_pat_5y",
+       "label": "Cumulative 5y CFO / PAT",
+       "value": 122,
+       "unit": "%",
+       "period": "Mar 2022–Mar 2026"
+      }
+     ]
+    },
+    {
+     "point": "FY27 revenue growth is tracking ahead of targets, with YTD growth at 34.9% supporting the on-track verdict for FY27 targets.",
+     "refs": [
+      "L3",
+      "calc.ytd_revenue_growth"
+     ],
+     "evidence": [
+      {
+       "type": "ledger",
+       "subject": "FY27 revenue growth and target",
+       "verdict": "on_track",
+       "promise": "Target 15-17% growth and ₹56,000 crores for FY27",
+       "why": "YTD revenue growth and TTM sales indicate strong momentum tracking ahead of the targets."
+      },
+      {
+       "type": "fact",
+       "id": "calc.ytd_revenue_growth",
+       "label": "Revenue growth FY27 YTD (2Q) vs prior-year period",
+       "value": 34.9,
+       "unit": "%",
+       "period": "FY27 YTD (2Q)"
+      }
+     ]
+    }
+   ],
+   "bear": [
+    {
+     "point": "Latest quarter profit fell 44.9% YoY while revenue rose 46.7%, indicating severe margin compression and profit not keeping up with sales.",
+     "refs": [
+      "S3",
+      "X.pat_yoy.Q2 FY27",
+      "X.revenue_yoy.Q2 FY27"
+     ],
+     "evidence": [
+      {
+       "type": "signal",
+       "tone": "bad",
+       "text": "Latest quarter (Sep 2026): revenue +46.7% YoY but profit -44.9% YoY — profit is not keeping up with sales."
+      },
+      {
+       "type": "fact",
+       "id": "X.pat_yoy.Q2 FY27",
+       "label": "PAT growth YoY (exchange filing)",
+       "value": -44.9,
+       "unit": "%",
+       "period": "Q2 FY27"
+      },
+      {
+       "type": "fact",
+       "id": "X.revenue_yoy.Q2 FY27",
+       "label": "Revenue growth YoY (exchange filing)",
+       "value": 46.7,
+       "unit": "%",
+       "period": "Q2 FY27"
+      }
+     ]
+    },
+    {
+     "point": "Operating margins declined to 2.7% from 3.8% a year earlier, directly contradicting the promised operating margin expansion.",
+     "refs": [
+      "S4",
+      "L2",
+      "X.EBITDA margin.Q2 FY27",
+      "X.EBITDA margin.Q2 FY26"
+     ],
+     "evidence": [
+      {
+       "type": "signal",
+       "tone": "bad",
+       "text": "Quarterly operating margin 2.7% (Sep 2026) vs 3.8% a year earlier."
+      },
+      {
+       "type": "ledger",
+       "subject": "Operating margins expansion",
+       "verdict": "at_risk",
+       "promise": "Target 40-50 bps expansion or restoration for FY28",
+       "why": "Reported operating margins have declined sequentially and year-over-year, moving directly against the promised expansion."
+      },
+      {
+       "type": "fact",
+       "id": "X.EBITDA margin.Q2 FY27",
+       "label": "EBITDA margin (exchange filing)",
+       "value": 2.7,
+       "unit": "%",
+       "period": "Q2 FY27"
+      },
+      {
+       "type": "fact",
+       "id": "X.EBITDA margin.Q2 FY26",
+       "label": "EBITDA margin (exchange filing)",
+       "value": 3.8,
+       "unit": "%",
+       "period": "Q2 FY26"
+      }
+     ]
+    },
+    {
+     "point": "FY26 capex of ₹1,058 Cr missed the guided ₹1,100-1,200 Cr range, signaling execution slippage in capital deployment plans.",
+     "refs": [
+      "L1",
+      "calc.capex.Mar 2026"
+     ],
+     "evidence": [
+      {
+       "type": "ledger",
+       "subject": "FY26 capex",
+       "verdict": "missed",
+       "promise": "Target ₹1,100 - 1,200 crore for FY26",
+       "why": "Reported capex of ₹1,058 Cr falls short of the guided ₹1,100 - 1,200 crore range."
+      },
+      {
+       "type": "fact",
+       "id": "calc.capex.Mar 2026",
+       "label": "Capex (CFO − FCF)",
+       "value": 1058.0,
+       "unit": "₹ Cr",
+       "period": "Mar 2026"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "HDFCBANK": {
+  "latest_quarter": "Sep 2026",
+  "credibility": "Management credibility is low on financial metrics. Promises of ROA stability and operating leverage are contradicted by declining margins and ROA. Growth promises are not supported by recent slowing revenue growth. Many specific targets remain unverifiable due to missing data.",
+  "ledger_rows": [
+   {
+    "subject": "Return on Assets (ROA)",
+    "verdict": "at_risk",
+    "guidance_ids": [
+     "G1.5",
+     "G3.2"
+    ],
+    "evidence": [
+     {
+      "id": "G1.5",
+      "call": "Q2 FY26",
+      "subject": "Return on Assets (ROA)",
+      "target": "stability with a positive bias",
+      "horizon": "medium to long term",
+      "statement": "Large part of our metrices, whether it is NIMs, whether it is Cost to Earnings, whether it is Return on Assets have been very range-bound, and we should see a fair amount of stability with a positive bias in the medium to long term."
+     },
+     {
+      "id": "G3.2",
+      "call": "Q4 FY26",
+      "subject": "return on assets",
+      "target": "stable to going up",
+      "horizon": "next 1-3 years",
+      "statement": "The above leadership position will enable us to harness efficiencies across the organization and will be a key driver to enhance return on asset over the next 1, 2, 3 years."
+     }
+    ]
+   },
+   {
+    "subject": "Operating Leverage",
+    "verdict": "at_risk",
+    "guidance_ids": [
+     "G1.6",
+     "G3.5",
+     "G4.8"
+    ],
+    "evidence": [
+     {
+      "id": "G1.6",
+      "call": "Q2 FY26",
+      "subject": "operating leverage",
+      "target": "operating leverage",
+      "horizon": "medium to long term",
+      "statement": "we should see our investments in distribution and technology creating an operating leverage over the medium to long-term."
+     },
+     {
+      "id": "G3.5",
+      "call": "Q4 FY26",
+      "subject": "cost-to-income ratio",
+      "target": "operating leverage",
+      "horizon": "medium term",
+      "statement": "if we just focus on the investments that we have made in technology and implement them across the organization, you should see operating leverage kicking in"
+     },
+     {
+      "id": "G4.8",
+      "call": "Q1 FY27",
+      "subject": "cost-to-earnings efficiency",
+      "target": "efficiency gains",
+      "horizon": "next 2-3 years",
+      "statement": "over the next two to three years, returns in terms of efficiencies will start to play out and which is what is going to be our key strategy"
+     }
+    ]
+   },
+   {
+    "subject": "Bank Growth Trajectory",
+    "verdict": "at_risk",
+    "guidance_ids": [
+     "G2.1"
+    ],
+    "evidence": [
+     {
+      "id": "G2.1",
+      "call": "Q3 FY26",
+      "subject": "bank growth trajectory",
+      "target": "pre-merger growth levels",
+      "horizon": "medium term",
+      "statement": "I think you will see the kind of growth that we have used to pre-merger coming back."
+     }
+    ]
+   },
+   {
+    "subject": "FY27 MSME growth",
+    "verdict": "unverifiable",
+    "guidance_ids": [
+     "G3.4"
+    ],
+    "evidence": [
+     {
+      "id": "G3.4",
+      "call": "Q4 FY26",
+      "subject": "MSME growth",
+      "target": "18-21%",
+      "horizon": "FY27",
+      "statement": "we have grown our business banking... and that will continue to also be in that range of 18% to 20%, 21%, depending upon, obviously, some of the developments in the economy."
+     }
+    ]
+   },
+   {
+    "subject": "NIM trajectory",
+    "verdict": "unverifiable",
+    "guidance_ids": [
+     "G1.2",
+     "G5.1"
+    ],
+    "evidence": [
+     {
+      "id": "G1.2",
+      "call": "Q2 FY26",
+      "subject": "NIM (Net Interest Margin)",
+      "target": "tailwind effect",
+      "horizon": "next 6-12 months",
+      "statement": "We should see over the next 6 to 12 months the deposit repricing having some amount of tailwind effect in the NIMs."
+     },
+     {
+      "id": "G5.1",
+      "call": "Q2 FY27",
+      "subject": "Net Interest Margin (NIM)",
+      "target": "upward trajectory",
+      "horizon": "Q3 FY27",
+      "statement": "The trajectory will be upward from the next quarter onwards."
+     }
+    ]
+   },
+   {
+    "subject": "CASA Ratio",
+    "verdict": "unverifiable",
+    "guidance_ids": [
+     "G4.4"
+    ],
+    "evidence": [
+     {
+      "id": "G4.4",
+      "call": "Q1 FY27",
+      "subject": "CASA ratio",
+      "target": "38%",
+      "horizon": "medium to long term",
+      "statement": "the endeavor and our vision is to reach to somewhere near the pre-merger levels or just around the time of the merger, which was around 38."
+     }
+    ]
+   },
+   {
+    "subject": "Customer Acquisition",
+    "verdict": "unverifiable",
+    "guidance_ids": [
+     "G3.8"
+    ],
+    "evidence": [
+     {
+      "id": "G3.8",
+      "call": "Q4 FY26",
+      "subject": "customer acquisition",
+      "target": "6-8 million annually",
+      "horizon": "ongoing",
+      "statement": "Customers at 100 million, we continue to acquire about 6 million to 8 million customers a year. This will be the funnel for future growth."
+     }
+    ]
+   }
+  ],
+  "thesis": {
+   "bull": [
+    {
+     "point": "Revenue growth has accelerated from 2.4% YoY in Dec 2025 to 9.4% in Sep 2026, alongside a 9.1% total income growth in Q2 FY27.",
+     "refs": [
+      "S3",
+      "X.revenue_yoy.Q2 FY27"
+     ],
+     "evidence": [
+      {
+       "type": "signal",
+       "tone": "good",
+       "text": "Revenue growth accelerating: 2.4% YoY (Dec 2025) → 9.4% (Sep 2026)."
+      },
+      {
+       "type": "fact",
+       "id": "X.revenue_yoy.Q2 FY27",
+       "label": "Total income growth YoY (exchange filing)",
+       "value": 9.1,
+       "unit": "%",
+       "period": "Q2 FY27"
+      }
+     ]
+    },
+    {
+     "point": "Management guides for an upward trajectory in Net Interest Margin starting from the next quarter onwards.",
+     "refs": [
+      "G5.1"
+     ],
+     "evidence": [
+      {
+       "type": "guidance",
+       "id": "G5.1",
+       "call": "Q2 FY27",
+       "subject": "Net Interest Margin (NIM)",
+       "target": "upward trajectory",
+       "horizon": "Q3 FY27",
+       "statement": "The trajectory will be upward from the next quarter onwards."
+      }
+     ]
+    },
+    {
+     "point": "Long-term growth remains robust, with a 3-year revenue CAGR of 26.9% and a 3-year PAT CAGR of 19.7% through FY26 — spans the FY24 step-change: assets +59%, likely inorganic.",
+     "refs": [
+      "calc.revenue_cagr_3y",
+      "calc.pat_cagr_3y"
+     ],
+     "evidence": [
+      {
+       "type": "fact",
+       "id": "calc.revenue_cagr_3y",
+       "label": "Revenue CAGR 3y (spans the FY24 step-change: assets +59%, likely inorganic)",
+       "value": 26.9,
+       "unit": "%",
+       "period": "FY23–FY26"
+      },
+      {
+       "type": "fact",
+       "id": "calc.pat_cagr_3y",
+       "label": "PAT CAGR 3y (spans the FY24 step-change: assets +59%, likely inorganic)",
+       "value": 19.7,
+       "unit": "%",
+       "period": "FY23–FY26"
+      }
+     ]
+    }
+   ],
+   "bear": [
+    {
+     "point": "Return on average assets declined from 2% in FY24 to 1.7% in FY26, and operating margins contracted to 25.4% in Q2 FY27.",
+     "refs": [
+      "calc.roa.Mar 2026",
+      "X.Pre-provision margin.Q2 FY27",
+      "L2",
+      "X.Pre-provision margin.Q2 FY26"
+     ],
+     "evidence": [
+      {
+       "type": "fact",
+       "id": "calc.roa.Mar 2026",
+       "label": "Return on average assets",
+       "value": 1.7,
+       "unit": "%",
+       "period": "FY26"
+      },
+      {
+       "type": "fact",
+       "id": "X.Pre-provision margin.Q2 FY27",
+       "label": "Pre-provision margin (exchange filing)",
+       "value": 25.4,
+       "unit": "%",
+       "period": "Q2 FY27"
+      },
+      {
+       "type": "ledger",
+       "subject": "Operating Leverage",
+       "verdict": "at_risk",
+       "promise": "Operating leverage kicking in from tech investments.",
+       "why": "Margins are contracting (26.1% to 25.4%) despite promises of operating leverage from technology investments."
+      },
+      {
+       "type": "fact",
+       "id": "X.Pre-provision margin.Q2 FY26",
+       "label": "Pre-provision margin (exchange filing)",
+       "value": 26.1,
+       "unit": "%",
+       "period": "Q2 FY26"
+      }
+     ]
+    },
+    {
+     "point": "Analysts pressed management on why net interest margins continue to compress similarly to peers despite a low base.",
+     "refs": [
+      "A1"
+     ],
+     "evidence": [
+      {
+       "type": "analyst",
+       "topic": "Net Interest Margin (NIM) compression",
+       "quote": "why still our margin decline is similar to what other players are, why we are not outperforming even on a low base compared to where the other players are."
+      }
+     ]
+    },
+    {
+     "point": "Profits have lagged sales over a 5-year period, with a 22.1% revenue CAGR compared to a 20.0% PAT CAGR.",
+     "refs": [
+      "S2"
+     ],
+     "evidence": [
+      {
+       "type": "signal",
+       "tone": "neutral",
+       "text": "5-year revenue CAGR 22.1% vs PAT CAGR 20.0% — profits lagged sales."
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

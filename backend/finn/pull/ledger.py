@@ -8,7 +8,7 @@ import re
 
 from ..grounding import ungrounded
 from ..llm import chat_json
-from . import periods
+from . import narrative, periods
 
 VERDICTS = ["delivered", "missed", "on_track", "at_risk", "goalposts_moved", "dropped", "too_early", "unverifiable"]
 
@@ -54,7 +54,10 @@ Return JSON:
   "guidance_ids":["G1.2"],"trajectory":[{"call":"Q4 FY26","guidance_id":"G1.2","stance":"set"}],
   "delivered":"max 25 words: what actually happened","fact_ids":["calc.ytd_revenue_growth"],
   "verdict":"one verdict","why":"max 30 words"}],
- "credibility":"max 45 words: overall read on whether this management's guidance can be relied on, and in which areas"}"""
+ "credibility":"max 45 words: overall read on whether this management's guidance can be relied on, and in which areas"}
+The credibility read must agree with your verdicts: say a promise was missed only if its row is "missed", and met or
+delivered only if its row is "delivered". A promise whose horizon is still running (on_track / at_risk) has not been
+missed or delivered yet — say it is at risk or on track."""
 
 
 def readable_ids(text: str, facts: dict) -> str:
@@ -169,8 +172,19 @@ def build(calls: list[dict], facts: dict, latest_quarter: str) -> dict:
     order = ["missed", "at_risk", "goalposts_moved", "dropped", "delivered", "on_track", "too_early", "unverifiable"]
     rows.sort(key=lambda r: order.index(r["verdict"]))
     counts = {v: sum(1 for r in rows if r["verdict"] == v) for v in VERDICTS}
-    return {"status": "ok", "rows": rows, "credibility": out.get("credibility"), "counts": counts, "calls": call_order,
-            "warnings": problems}
+    result = {"status": "ok", "rows": rows, "credibility": out.get("credibility"), "counts": counts, "calls": call_order,
+              "warnings": problems}
+    _credibility_guard(result)
+    return result
+
+
+def _credibility_guard(result: dict) -> None:
+    """The model writes the credibility read alongside its own verdicts, before the code guards change any; it must
+    agree with the final ones. If it calls a promise missed/delivered that the ledger doesn't, state the record."""
+    text = readable_ids(result.get("credibility") or "", {})
+    if issue := narrative.credibility_issue(text, result["rows"]):
+        result["credibility_check"] = {"replaced": text, "issue": issue}
+        result["credibility"] = narrative.credibility_summary(result["rows"])
 
 
 def _validate(out: dict, guidance: dict, fact_ids: set, evidence: str):
