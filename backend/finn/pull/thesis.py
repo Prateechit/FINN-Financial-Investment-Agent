@@ -18,6 +18,10 @@ quarter's profit and margin signals heavily: a bull case that ignores a sharp pr
 Comparison periods: India's fiscal year runs April–March (Q2 FY27 = Jul–Sep 2026). "Sequential" / "quarter-on-quarter"
 means against the immediately preceding quarter (Q2 FY27 vs Q1 FY27) — cite both quarters' figures. The same quarter a
 year earlier (Q2 FY27 vs Q2 FY26) is "year-on-year", never "sequential".
+Series: signals (S*) and calc.* facts come from the standardised statements; X.* facts come from the company's exchange
+filing. The two can report slightly different figures for the same metric and quarter, so a trend or comparison uses
+figures from one series only. Label every figure with its own period as given in FACTS or the signal — an FY26 figure
+is "FY26", not a month or a quarter.
 Promise status comes only from the ledger verdict shown next to each guidance item and ledger row: say a promise is
 met, delivered, kept or validated only if its verdict is "delivered". A "too_early" promise has not been tested (its
 period may not have started), and "on_track" / "at_risk" promises are still open — current figures can be described

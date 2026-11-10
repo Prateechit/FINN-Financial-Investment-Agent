@@ -8,6 +8,7 @@ with the fixed verdicts or with the figures a sentence cites. These checks do, w
     the words may still name a promise ("guidance for sequential margin improvement");
   - one series: the % figures a point quotes for one metric must come from one data series (the exchange filing's
     9.1% and the standardised statements' 2.4% are not one revenue-growth trend);
+  - period labels: a figure is labelled with its own reporting period (the FY26 ROA is not "1.7% in Sep 2026");
   - promise status: a point may say a promise is met / validated / delivered only if every promise it cites is
     "delivered" in the ledger — a "too_early" promise (e.g. H2 FY27, not started) has not been tested — and may say
     one failed / was missed only if a promise it cites is "missed" (an "at_risk" promise has not failed);
@@ -42,7 +43,8 @@ def _metric(fid: str) -> tuple[str, str | None]:
 
 class _Evidence:
     """Per metric: is there sequential evidence (adjacent quarters, or a QoQ figure) and year-on-year evidence (the same
-    quarter a year apart, or a YoY figure) among the cited facts?"""
+    quarter a year apart, or a YoY figure) among the cited facts — including the figures a cited signal is computed
+    from (S3 "2.4% YoY → 9.4%" is year-on-year evidence)?"""
 
     def __init__(self, evidence: list[dict]):
         quarters: dict[str, set] = {}
@@ -50,9 +52,9 @@ class _Evidence:
         self.yoy: dict[str, str] = {}   # metric → description of the year-on-year evidence
         self.adjacent: dict[str, tuple] = {}
         self.year_apart: dict[str, tuple] = {}
-        for e in evidence:
+        for e in _figures(evidence):
             fid = str(e.get("id") or "")
-            if e.get("type") != "fact" or "value" not in e or "." not in fid:
+            if "." not in fid:
                 continue
             metric, kind = _metric(fid)
             p = periods.fact_period(fid, e.get("period"))
@@ -216,16 +218,32 @@ def series_issue(point: str, evidence: list[dict]) -> str | None:
     figure is 9.4% — flagged. Quoting both series' figures for the same quarter beside one series' trend ("2.4% → 9.4%,
     alongside 9.1% total income growth") is not a cross-series trend. Nothing is substituted: the issue names what each
     series has."""
+    mix = _mixed_series(point, evidence)
+    if not mix:
+        return None
+    metric, kind, facts, used = mix
+    source = lambda f: "exchange filing" if f["id"].startswith("X.") else "standardised statements"  # noqa: E731
+    shown = " and ".join(f"{v:g}% ({q.label}, {source(f)})" for _, q, v, f in sorted(used, key=lambda u: -u[2]))
+    alt = [f"the {source(f)} {'gives' if f['id'].startswith('X.') else 'give'} {f['value']:g}% for {q.label}"
+           for s, q, v, f in facts if (s, q) not in {(s2, q2) for s2, q2, _, _ in used}
+           and q in {q2 for s2, q2, _, _ in used if s2 != s}]
+    name = f"{metric} growth ({kind.upper()})" if kind else metric
+    return (f"Mixes two {name} series: {shown}. Compare figures from one series"
+            + (f" — {'; '.join(dict.fromkeys(alt))}." if alt else "."))
+
+
+def _mixed_series(point: str, evidence: list[dict]):
+    """The first metric whose quoted figures form a cross-series trend: (metric, kind, all its cited figures, the quoted
+    ones), each figure as (series, quarter, |value|, fact). None if every trend comes from one series."""
     quoted = {round(float(x), 2) for x in _PCT.findall(point)}
     if len(quoted) < 2:
         return None
-    by_metric: dict[tuple, list[tuple]] = {}   # metric → [(series, quarter, value, fact)]
+    by_metric: dict[tuple, list[tuple]] = {}
     for f in _figures(evidence):
         fid = str(f.get("id") or "")
         p = periods.fact_period(fid, f.get("period")) if "." in fid else None
         if p:
             by_metric.setdefault(_metric(fid), []).append((fid.rsplit(".", 1)[0], p.start, round(abs(float(f["value"])), 2), f))
-    source = lambda f: "exchange filing" if f["id"].startswith("X.") else "standardised statements"  # noqa: E731
     for (metric, kind), facts in sorted(by_metric.items(), key=lambda kv: kv[0]):
         series = {s for s, *_ in facts}
         used = list({(s, q, v): (s, q, v, f) for s, q, v, f in facts if v in quoted}.values())
@@ -233,14 +251,115 @@ def series_issue(point: str, evidence: list[dict]) -> str | None:
         if len(series) < 2 or len(spanned) < 2 or any(all(any(s == one and q == p for s, q, _, _ in used) for p in spanned)
                                                       for one in series):
             continue
-        shown = " and ".join(f"{v:g}% ({q.label}, {source(f)})" for _, q, v, f in sorted(used, key=lambda u: -u[2]))
-        alt = [f"the {source(f)} {'gives' if f['id'].startswith('X.') else 'give'} {f['value']:g}% for {q.label}"
-               for s, q, v, f in facts if (s, q) not in {(s2, q2) for s2, q2, _, _ in used}
-               and q in {q2 for s2, q2, _, _ in used if s2 != s}]
-        name = f"{metric} growth ({kind.upper()})" if kind else metric
-        return (f"Mixes two {name} series: {shown}. Compare figures from one series"
-                + (f" — {'; '.join(dict.fromkeys(alt))}." if alt else "."))
+        return metric, kind, facts, used
     return None
+
+
+def _pct_spans(point: str, value: float) -> list[tuple[int, int]]:
+    """Where a % figure equal to `value` (to 2 decimals) is written in the point."""
+    return [m.span() for m in re.finditer(r"(?<![\w.])(\d+(?:\.\d+)?)\s?%", point) if round(float(m.group(1)), 2) == value]
+
+
+def _use_one_series(point: str, refs: list[str], evidence: list[dict]):
+    """Repair a cross-series trend by moving it onto the one series that has a cited figure for every period the trend
+    spans: each figure quoted from the other series is replaced by that series' figure for the same period, and a
+    reference cited only for a replaced figure is dropped. The figure comes from the cited evidence — nothing is looked
+    up or estimated — and the repair is skipped when it would be ambiguous (no single such series, or the replaced
+    figure written more than once or shared with another cited metric). Returns (point, refs, evidence) or None."""
+    mix = _mixed_series(point, evidence)
+    if not mix:
+        return None
+    metric, kind, facts, used = mix
+    spanned = {q for _, q, _, _ in used}
+    targets = [s for s in sorted({s for s, *_ in facts}) if all(any(s2 == s and q == p for s2, q, _, _ in facts) for p in spanned)]
+    if len(targets) != 1:
+        return None
+    target = targets[0]
+    all_values = [round(abs(float(f["value"])), 2) for f in _figures(evidence)]
+    edits, replaced = [], []
+    for s, q, v, f in used:
+        if s == target or any(s2 == target and q2 == q and v2 == v for s2, q2, v2, _ in facts):
+            continue
+        spans = _pct_spans(point, v)
+        if len(spans) != 1 or all_values.count(v) > 1:
+            return None
+        new = next(f2 for s2, q2, _, f2 in facts if s2 == target and q2 == q)
+        edits.append((spans[0], f"{abs(float(new['value'])):g}%"))
+        replaced.append(f["id"])
+    if not edits:
+        return None
+    for (a, b), text in sorted(edits, reverse=True):
+        point = point[:a] + text + point[b:]
+    if len(refs) == len(evidence):
+        pairs = [(r, e) for r, e in zip(refs, evidence) if not (e.get("type") == "fact" and e.get("id") in replaced)]
+        if pairs:
+            refs, evidence = [r for r, _ in pairs], [e for _, e in pairs]
+    return point, refs, evidence
+
+
+# ---------- each figure carries its own period ----------
+
+_MONTHS = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?"
+_LABEL = rf"(?:Q[1-4]\s?FY\s?'?\d{{2,4}}|H[12]\s?FY\s?'?\d{{2,4}}|FY\s?'?\d{{2,4}}(?:\s?[-–/]\s?'?\d{{2,4}})?|{_MONTHS}\s\d{{4}})"
+# A % figure with the period it is attached to: "1.7% in Sep 2026", "2.4% YoY (Dec 2025)", "9.4% YoY in Q2 FY27".
+# Only a preposition or bracket attaches a label — "16.1% exceeded Q2 FY26's 15.7%" names Q2 FY26 for the next figure.
+_VALUE_LABEL = re.compile(rf"(?<![\w.])(\d+(?:\.\d+)?)\s?%\s*(?:(?:YoY|QoQ|y-?o-?y|q-?o-?q|year[- ]on[- ]year|"
+                          rf"quarter[- ]on[- ]quarter|sequentially)\s*)?(?:\(\s*|(?:in|for|during|as\s+of|at)\s+)"
+                          rf"(?P<label>{_LABEL})(?![\w-])", re.I)
+
+
+def _fact_fiscal(f: dict) -> periods.Period | None:
+    """Fiscal period of a cited figure; annual facts stored with period "FY26" fall back to their id ("… .Mar 2026")."""
+    fid = str(f.get("id") or "")
+    return periods.fact_period(fid, f.get("period")) or (periods.fact_period(fid, fid.rsplit(".", 1)[1]) if "." in fid else None)
+
+
+def _label_period(text: str) -> periods.Period | None:
+    fq = periods.from_calendar(text)
+    return periods.quarter(fq) if fq else periods.resolve(text, None)
+
+
+def _fits(fact: periods.Period, label: periods.Period) -> bool:
+    """Does this label name the figure's own period? An FY figure may also be named by its year-end quarter (Mar
+    2026 for FY26), and a year-to-date figure by its fiscal year."""
+    if (fact.start, fact.end) == (label.start, label.end):
+        return True
+    if fact.kind == "year" and label.kind == "quarter" and label.start == fact.end:
+        return True
+    return fact.kind == "ytd" and label.kind == "year" and label.covers(fact)
+
+
+def _period_labels(point: str, evidence: list[dict]) -> list[tuple]:
+    """Mislabelled figures: (label span, label text, cited facts with that value, their periods), where no cited fact
+    with that value has the labelled period."""
+    figs = [(round(abs(float(f["value"])), 2), f, p) for f in _figures(evidence) if (p := _fact_fiscal(f))]
+    out = []
+    for m in _VALUE_LABEL.finditer(point):
+        v, label = round(float(m.group(1)), 2), _label_period(m.group("label"))
+        cands = [(f, p) for v2, f, p in figs if v2 == v]
+        if label and cands and not any(_fits(p, label) for _, p in cands):
+            out.append((m.span("label"), m.group("label"), cands))
+    return out
+
+
+def period_label_issue(point: str, evidence: list[dict]) -> str | None:
+    """A figure must be labelled with its own reporting period: the FY26 ROA (1.7%) is not "1.7% in Sep 2026"."""
+    bad = _period_labels(point, evidence)
+    if not bad:
+        return None
+    _, text, cands = bad[0]
+    f, p = cands[0]
+    return f"Labels the {p.label} figure {abs(float(f['value'])):g}% ({f['id']}) as {text}; use its own period, {p.label}."
+
+
+def _relabel_periods(point: str, evidence: list[dict]) -> str:
+    """Repair a mislabelled figure by naming its own period, when exactly one cited fact has that value and the wrong
+    label appears once: "1.7% in Sep 2026" → "1.7% in FY26" for calc.roa.Mar 2026."""
+    for (a, b), text, cands in sorted(_period_labels(point, evidence), key=lambda x: -x[0][0]):
+        if len(cands) != 1 or point.count(text) != 1:
+            continue
+        point = point[:a] + cands[0][1].label + point[b:]
+    return point
 
 
 _CLAUSE_SEP = re.compile(r",\s+|;\s+|\s+[—–]\s+|\s+-\s+")
@@ -274,9 +393,34 @@ def trim_unmet_promise_claim(point: str, refs: list[str], evidence: list[dict], 
     if len(refs) == len(evidence) and any(r not in drop for r in refs):
         pairs = [(r, e) for r, e in zip(refs, evidence) if r not in drop]
         refs, evidence = [r for r, _ in pairs], [e for _, e in pairs]
-    if comparison_issue(kept, evidence) or series_issue(kept, evidence) or promise_issue(kept, refs, evidence, ledger_rows, latest):
+    if comparison_issue(kept, evidence) or series_issue(kept, evidence) or period_label_issue(kept, evidence) or \
+            promise_issue(kept, refs, evidence, ledger_rows, latest):
         return None
     return kept, refs, evidence
+
+
+def repair_point(point: str, refs: list[str], evidence: list[dict], ledger_rows: dict[str, dict],
+                 latest: periods.FQ | None) -> tuple[str, list[str], list[dict]] | None:
+    """Deterministic last-resort repair of a point still flagged after its rewrite, in this order: name each mislabelled
+    figure's own period; move a cross-series trend onto the one series covering it; drop a clause that says an
+    untested / unmet promise was met, or a not-missed one failed. Every figure used is already cited. Returns the
+    repaired (point, refs, evidence) only if it then passes every narrative check — else None (the point stays
+    disputed). The caller re-verifies the repaired text."""
+    original = point
+    point = _relabel_periods(point, evidence)
+    if fixed := _use_one_series(point, refs, evidence):
+        point, refs, evidence = fixed
+    if promise_issue(point, refs, evidence, ledger_rows, latest):
+        cut = trim_unmet_promise_claim(point, refs, evidence, ledger_rows, latest)
+        if not cut:
+            return None
+        point, refs, evidence = cut
+    if point == original:
+        return None
+    if comparison_issue(point, evidence) or series_issue(point, evidence) or period_label_issue(point, evidence) or \
+            promise_issue(point, refs, evidence, ledger_rows, latest):
+        return None
+    return point, refs, evidence
 
 
 def thesis_issues(thesis: dict, ledger: dict, latest: periods.FQ | None) -> dict[str, dict]:
@@ -287,6 +431,7 @@ def thesis_issues(thesis: dict, ledger: dict, latest: periods.FQ | None) -> dict
         for i, p in enumerate(thesis.get(side) or []):
             ev = p.get("evidence") or []
             issues = [x for x in (comparison_issue(p["point"], ev), series_issue(p["point"], ev),
+                                  period_label_issue(p["point"], ev),
                                   promise_issue(p["point"], p.get("refs") or [], ev, led, latest)) if x]
             if issues:  # every reason goes to the rewrite, so fixing one doesn't leave the other
                 out[f"{side}{i + 1}"] = {"supported": False, "issue": " ".join(issues)}
