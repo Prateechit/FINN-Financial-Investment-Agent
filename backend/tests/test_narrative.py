@@ -68,6 +68,31 @@ def test_adjacent_quarters_called_year_on_year_are_flagged():
     assert "sequential" in narrative.comparison_issue("Margin rose 3 bps year-on-year to 16.07%.", SEQ_PAIR)
 
 
+# The two false positives from the PR #1 review: "sequential" names management's promise, not the cited comparison.
+@pytest.mark.parametrize("point", [
+    "EBITDA margin rose to 16.1% in Q2 FY27 from 15.7% a year earlier; the H2 FY27 sequential improvement promise is still untested.",
+    "EBITDA margin rose year-on-year to 16.1%, consistent with guidance for sequential margin improvement in H2 FY27.",
+])
+def test_sequential_naming_a_future_promise_is_not_flagged(point):
+    assert narrative.comparison_issue(point, YOY_PAIR) is None
+    assert narrative.promise_issue(point, BULL2["refs"], BULL2["evidence"], LED, LATEST) is None
+
+
+@pytest.mark.parametrize("point", [
+    "EBITDA margin improved sequentially to 16.1% in Q2 FY27.",                           # the original claim
+    "EBITDA margin improved sequentially to 16.1% in Q2 FY27, validating the promise of sequential margin improvement.",
+    "Margin improved sequentially as guided, to 16.1% in Q2 FY27.",                       # "as guided" is not a promise noun
+    "Management expects sequential improvement; margin already rose 16.1% sequentially.",  # second clause is the claim
+])
+def test_sequential_describing_a_year_apart_pair_is_still_flagged(point):
+    assert "is year-on-year" in narrative.comparison_issue(point, YOY_PAIR)
+
+
+def test_year_on_year_naming_a_promise_is_not_flagged():
+    point = "Margin edged up to 16.07% in Q2 FY27 from 16.04%, ahead of the year-on-year improvement target."
+    assert narrative.comparison_issue(point, SEQ_PAIR) is None
+
+
 @pytest.mark.parametrize("point", [
     "EBITDA margin rose to 16.1% in Q2 FY27, consistent with the H2 FY27 margin-improvement guidance, which is untested.",
     "The H2 FY27 margin promise has not yet been validated.",
@@ -131,11 +156,40 @@ def test_missed_with_no_missed_promise_at_all_is_flagged():
 
 # ---------- the research pipeline acts on the flags ----------
 
-def _secs():
-    rows = copy.deepcopy(TT["ledger_rows"])
+FIN = {"trajectory": {"quarterly": [{"period": "Sep 2026"}]}}
+POINTS = ["bull1", "bull2", "bull3", "bear1", "bear2", "bear3"]
+
+
+def _secs(sym="TATATECH"):
+    rows = copy.deepcopy(FIX[sym]["ledger_rows"])
     for r in rows:
         r.setdefault("facts", []), r.setdefault("delivered", ""), r.setdefault("why", "")
-    return {"thesis": copy.deepcopy(TT["thesis"]), "ledger": {"rows": rows}}
+    return {"thesis": copy.deepcopy(FIX[sym]["thesis"]), "ledger": {"rows": rows}}
+
+
+def _all_supported(claims):
+    return {c["id"]: {"supported": True, "issue": ""} for c in claims}
+
+
+def _verifier(*passes):
+    """A verifier whose n-th call returns passes[n](claims); {} means the model was unavailable."""
+    calls = []
+
+    def check(claims):
+        calls.append([c["id"] for c in claims])
+        return passes[len(calls) - 1](claims)
+    return check, calls
+
+
+def _verified(secs):
+    return {f"{side}{i + 1}": p["verified"] for side in ("bull", "bear") for i, p in enumerate(secs["thesis"][side])}
+
+
+def _corrected(fin, calls, led, feedback=None):
+    th = copy.deepcopy(TT["thesis"])
+    th["bull"][1] = {"point": "EBITDA margin rose to 16.1% in Q2 FY27 from 15.7% a year earlier; the H2 FY27 "
+                              "sequential improvement promise is still untested.", "refs": BULL2["refs"], "evidence": BULL2["evidence"]}
+    return th
 
 
 def test_flagged_point_is_rewritten_even_when_the_second_model_misses_it(monkeypatch):
@@ -156,6 +210,8 @@ def test_flagged_point_is_rewritten_even_when_the_second_model_misses_it(monkeyp
     assert len(seen["feedback"]) == 1 and seen["feedback"][0].startswith('"EBITDA margin improved sequentially')
     assert secs["verification"]["rewrote_thesis"] is True and secs["verification"]["flagged"] == 0
     assert secs["thesis"]["bull"][1]["verified"] is True
+    v = secs["verification"]
+    assert (v["status"], v["recheck"], v["unchecked"]) == ("done", "done", 0)
 
 
 def test_point_still_wrong_after_the_rewrite_stays_flagged(monkeypatch):
@@ -173,6 +229,62 @@ def test_narrative_checks_run_when_no_verifier_model_is_available(monkeypatch):
     secs = _secs()
     research._verify({"trajectory": {"quarterly": [{"period": "Sep 2026"}]}}, [], secs)
     assert secs["verification"]["status"] == "narrative_only" and secs["thesis"]["bull"][1]["verified"] is False
+    # no model judged the other five: unchecked, not verified
+    assert {k: v for k, v in _verified(secs).items() if k != "bull2"} == dict.fromkeys(POINTS[:1] + POINTS[2:])
+    assert secs["verification"]["unchecked"] == 5
+
+
+# ---------- the second (post-rewrite) verifier pass ----------
+
+def test_verifier_unavailable_for_the_rewrite_leaves_every_point_unchecked(monkeypatch):
+    check, seen = _verifier(_all_supported, lambda claims: {})  # passes the draft, then quota runs out
+    monkeypatch.setattr(research.verify, "check", check)
+    monkeypatch.setattr(research.thesis, "build", _corrected)
+    secs = _secs()
+    research._verify(FIN, [], secs)
+    assert len(seen) == 2 and all(k.startswith(("bull", "bear")) for k in seen[1])  # the rewrite was sent for checking
+    assert _verified(secs) == dict.fromkeys(POINTS)                                  # none silently "verified"
+    v = secs["verification"]
+    assert (v["status"], v["recheck"], v["unchecked"], v["flagged"], v["rewrote_thesis"]) == \
+        ("rewrite_unverified", "unavailable", 6, 0, True)
+    assert all(r["verified"] is True for r in secs["ledger"]["rows"] if r["verdict"] != "unverifiable")  # first pass stands
+
+
+def test_narrative_flag_survives_an_unavailable_second_pass(monkeypatch):
+    check, _ = _verifier(_all_supported, lambda claims: {})
+    monkeypatch.setattr(research.verify, "check", check)
+    monkeypatch.setattr(research.thesis, "build", lambda fin, calls, led, feedback=None: copy.deepcopy(TT["thesis"]))
+    secs = _secs()
+    research._verify(FIN, [], secs)
+    assert _verified(secs) == {**dict.fromkeys(POINTS), "bull2": False}
+    assert "year-on-year" in secs["thesis"]["bull"][1]["issue"]
+    v = secs["verification"]
+    assert (v["status"], v["flagged"], v["unchecked"]) == ("rewrite_unverified", 1, 5)
+
+
+def test_points_the_verifier_skipped_in_the_second_pass_are_unchecked(monkeypatch):
+    partial = lambda claims: {c["id"]: {"supported": True, "issue": ""} for c in claims if c["id"] not in ("bear2", "bear3")}  # noqa: E731
+    check, _ = _verifier(_all_supported, partial)
+    monkeypatch.setattr(research.verify, "check", check)
+    monkeypatch.setattr(research.thesis, "build", _corrected)
+    secs = _secs()
+    research._verify(FIN, [], secs)
+    assert _verified(secs) == {**dict.fromkeys(POINTS, True), "bear2": None, "bear3": None}
+    v = secs["verification"]
+    assert (v["status"], v["recheck"], v["unchecked"]) == ("done", "done", 2)
+
+
+@pytest.mark.parametrize("sym", ["DIXON", "HDFCBANK"])
+def test_no_rewrite_when_nothing_is_flagged_and_skipped_points_are_unchecked(monkeypatch, sym):
+    skip_last = lambda claims: {c["id"]: {"supported": True, "issue": ""} for c in claims if c["id"] != "bear3"}  # noqa: E731
+    check, seen = _verifier(skip_last)
+    monkeypatch.setattr(research.verify, "check", check)
+    monkeypatch.setattr(research.thesis, "build", lambda *a, **k: pytest.fail("no rewrite expected"))
+    secs = _secs(sym)
+    research._verify(FIN, [], secs)
+    assert len(seen) == 1 and _verified(secs) == {**dict.fromkeys(POINTS, True), "bear3": None}
+    v = secs["verification"]
+    assert (v["status"], v["recheck"], v["unchecked"], v["rewrote_thesis"]) == ("done", None, 1, False)
 
 
 # ---------- what the thesis and verifier models are told ----------

@@ -3,8 +3,9 @@
 The ledger and thesis models write sentences; the ledger's code guards then fix verdicts. Nothing made the prose agree
 with the fixed verdicts or with the figures a sentence cites. These checks do, without a model call:
 
-  - comparison wording: "sequential(ly)" / "quarter-on-quarter" must rest on adjacent quarters, "year-on-year" on the
-    same quarter a year apart (Q2 FY27 vs Q2 FY26 is year-on-year, never sequential);
+  - comparison wording: "sequential(ly)" / "quarter-on-quarter" describing the cited figures must rest on adjacent
+    quarters, "year-on-year" on the same quarter a year apart (Q2 FY27 vs Q2 FY26 is year-on-year, never sequential);
+    the words may still name a promise ("guidance for sequential margin improvement");
   - promise status: a point may say a promise is met / validated / delivered only if every promise it cites is
     "delivered" in the ledger — a "too_early" promise (e.g. H2 FY27, not started) has not been tested;
   - the ledger's credibility summary: "missed X" / "hit X" must match X's final verdict, else FINN writes the summary
@@ -41,12 +42,29 @@ def _quarterly_pairs(evidence: list[dict]) -> tuple[list[tuple], list[tuple]]:
     return adjacent, year_apart
 
 
+# "Sequential" can name a management promise rather than describe the cited figures: "consistent with guidance for
+# sequential margin improvement", "the H2 FY27 sequential improvement promise is untested". Within a clause, a mention
+# preceded by a promise/guidance word, or followed within three words by a promise noun, is about the promise.
+_CLAUSE_BREAK = re.compile(r"[;,:()]|\s[—–-]\s|\b(?:while|whereas|but)\b", re.I)
+_PROMISE_BEFORE = re.compile(r"\b(?:promis\w*|guid\w*|target\w*|goals?|commit\w*|pledg\w*|outlook|expect\w*|aim\w*|plan\w*)\b", re.I)
+_PROMISE_AFTER = re.compile(r"^\W*(?:[\w‑-]+\W+){0,3}?(?:promise|guidance|target|goal|commitment|pledge|outlook)s?\b", re.I)
+
+
+def _describes_figures(rx: re.Pattern, point: str) -> bool:
+    """Does any mention of this comparison type describe the figures (not name a promise)?"""
+    for clause in _CLAUSE_BREAK.split(point):
+        for m in rx.finditer(clause or ""):
+            if not (_PROMISE_BEFORE.search(clause[:m.start()]) or _PROMISE_AFTER.match(clause[m.end():])):
+                return True
+    return False
+
+
 def comparison_issue(point: str, evidence: list[dict]) -> str | None:
     adjacent, year_apart = _quarterly_pairs(evidence)
-    if _SEQUENTIAL.search(point) and year_apart and not adjacent:
+    if _describes_figures(_SEQUENTIAL, point) and year_apart and not adjacent:
         _, a, b = year_apart[0]
         return f"Calls a {b.label} vs {a.label} comparison sequential; the same quarter a year apart is year-on-year."
-    if _YEAR_ON_YEAR.search(point) and adjacent and not year_apart:
+    if _describes_figures(_YEAR_ON_YEAR, point) and adjacent and not year_apart:
         _, a, b = adjacent[0]
         return f"Calls a {b.label} vs {a.label} comparison year-on-year; adjacent quarters are sequential."
     return None
