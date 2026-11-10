@@ -244,7 +244,9 @@ def _mixed_series(point: str, evidence: list[dict]):
         p = periods.fact_period(fid, f.get("period")) if "." in fid else None
         if p:
             by_metric.setdefault(_metric(fid), []).append((fid.rsplit(".", 1)[0], p.start, round(abs(float(f["value"])), 2), f))
-    for (metric, kind), facts in sorted(by_metric.items(), key=lambda kv: kv[0]):
+    # kind is None for a level figure ("X.PAT") and "yoy"/"qoq" for a growth rate ("X.pat_yoy"): a point citing both
+    # for one metric must not make the sort compare None with a str.
+    for (metric, kind), facts in sorted(by_metric.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")):
         series = {s for s, *_ in facts}
         used = list({(s, q, v): (s, q, v, f) for s, q, v, f in facts if v in quoted}.values())
         spanned = {q for _, q, _, _ in used}
