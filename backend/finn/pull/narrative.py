@@ -6,8 +6,11 @@ with the fixed verdicts or with the figures a sentence cites. These checks do, w
   - comparison wording: "sequential(ly)" / "quarter-on-quarter" describing the cited figures must rest on adjacent
     quarters, "year-on-year" on the same quarter a year apart (Q2 FY27 vs Q2 FY26 is year-on-year, never sequential);
     the words may still name a promise ("guidance for sequential margin improvement");
+  - one series: the % figures a point quotes for one metric must come from one data series (the exchange filing's
+    9.1% and the standardised statements' 2.4% are not one revenue-growth trend);
   - promise status: a point may say a promise is met / validated / delivered only if every promise it cites is
-    "delivered" in the ledger — a "too_early" promise (e.g. H2 FY27, not started) has not been tested;
+    "delivered" in the ledger — a "too_early" promise (e.g. H2 FY27, not started) has not been tested — and may say
+    one failed / was missed only if a promise it cites is "missed" (an "at_risk" promise has not failed);
   - the ledger's credibility summary: "missed X" / "hit X" must match X's final verdict, else FINN writes the summary
     from the verdicts themselves.
 """
@@ -139,12 +142,6 @@ _STATUS = {"too_early": "too early to judge", "unverifiable": "not verifiable fr
 _NEGATION_INSIDE = re.compile(r"\b(?:not|never|no|yet to|n't|n’t|fail\w*|cannot)\b", re.I)
 
 
-def _claims_achievement(point: str) -> bool:
-    """'validating the promise' — but not 'has not yet validated the promise' / 'promise has not been met'."""
-    return any(not _NEGATED.search(point[:m.start()]) and not _NEGATION_INSIDE.search(m.group(0))
-               for m in _CLAIMS_ACHIEVED.finditer(point))
-
-
 def _cited_promises(refs: list[str], ledger_rows: dict[str, dict]) -> list[dict]:
     """Ledger rows a point cites: directly (L3) or through a guidance item a row is built on (G5.2)."""
     rows = [ledger_rows[r] for r in refs if r in ledger_rows]
@@ -152,19 +149,97 @@ def _cited_promises(refs: list[str], ledger_rows: dict[str, dict]) -> list[dict]
     return rows
 
 
+# A failure assertion about a promise — "failing stability targets", "missed the guided range", "target not met".
+_FAILED = (r"(?:fail(?:s|ed|ing|ure)?|miss(?:es|ed|ing)?|f[ae]ll(?:s|ing)?\s+short\s+of|not\s+(?:been\s+)?"
+           r"(?:achieved|met|delivered|kept)|unmet|undelivered|broke|broken|breach(?:es|ed|ing)?)")
+_FAIL_TARGET = rf"(?:{_PROMISE}|guid(?:ed|ance)\s+(?:range|levels?))"
+# After the promise noun, "missing" describes something else ("targets remain unverifiable due to missing data").
+_FAILED_AFTER = _FAILED.replace("miss(?:es|ed|ing)?", "miss(?:es|ed)?")
+_CLAIMS_FAILED = re.compile(rf"\b{_FAILED}\s+(?:[\w'’‑-]+\s+){{0,5}}?{_FAIL_TARGET}\b|\b{_PROMISE}\s+(?:[\w'’‑-]+\s+){{0,4}}?"
+                            rf"(?:was\s+|were\s+|is\s+|are\s+|has\s+been\s+|have\s+been\s+|been\s+|remains?\s+)?{_FAILED_AFTER}\b", re.I)
+
+
+def _offending_claim(point: str, refs: list[str], evidence: list[dict], ledger_rows: dict[str, dict],
+                     latest: periods.FQ | None):
+    """The first claim in the point that a promise was met — or failed — which its ledger verdict contradicts.
+
+    A "met" claim needs every promise it cites to be delivered; a "failed / missed" claim needs a cited promise that
+    is actually missed (an at_risk or too_early promise has not failed). A cited guidance item about a period that
+    hasn't started can be neither. Returns (match, cited rows the claim misjudges, issue) or None."""
+    rows = _cited_promises(refs, ledger_rows)
+    unstarted = [p for e in evidence if e.get("type") == "guidance" and latest
+                 and (p := periods.promise_period(e)) and p.start > latest]
+    for kind, rx, verdict in (("met", _CLAIMS_ACHIEVED, "delivered"), ("failed", _CLAIMS_FAILED, "missed")):
+        for m in rx.finditer(point):
+            if _NEGATED.search(point[:m.start()]) or (kind == "met" and _NEGATION_INSIDE.search(m.group(0))):
+                continue
+            wrong = [r for r in rows if r.get("verdict") != verdict]
+            if kind == "failed" and any(r.get("verdict") == "missed" for r in rows):
+                wrong = []  # the failure claim is about the promise that was missed
+            said = "is met" if kind == "met" else "failed or was missed"
+            if wrong:
+                row = wrong[0]
+                p = periods.latest_promise(row.get("evidence") or [])
+                when = f" ({p.label} hasn't started)" if p and latest and p.start > latest else ""
+                return m, wrong, (f"Says a promise {said}, but the ledger marks '{row.get('subject')}' "
+                                  f"{_STATUS.get(row.get('verdict'), row.get('verdict'))}{when}.")
+            if unstarted and not rows:
+                return m, [], f"Says a promise {said}, but the promise is about {unstarted[0].label}, which hasn't started."
+    return None
+
+
 def promise_issue(point: str, refs: list[str], evidence: list[dict], ledger_rows: dict[str, dict],
                   latest: periods.FQ | None) -> str | None:
-    if not _claims_achievement(point):
+    found = _offending_claim(point, refs, evidence, ledger_rows, latest)
+    return found[2] if found else None
+
+
+# ---------- one series per comparison ----------
+
+_PCT = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s?%")
+
+
+def _figures(evidence: list[dict]) -> list[dict]:
+    """Cited figures with values: fact evidence, plus the facts a cited signal is computed from."""
+    out = []
+    for e in evidence:
+        if e.get("type") == "fact" and isinstance(e.get("value"), (int, float)):
+            out.append(e)
+        out += [f for f in e.get("figures") or [] if isinstance(f.get("value"), (int, float))]
+    return out
+
+
+def series_issue(point: str, evidence: list[dict]) -> str | None:
+    """A trend a point draws for one metric must come from one series: when its quoted % figures span several periods,
+    one data series must supply a quoted figure for every one of them. "Revenue growth accelerated to 9.1% … up from
+    2.4%" pairs the exchange filing's 9.1% (Q2 FY27) with the standardised statements' 2.4% (Q3 FY26), whose own Q2 FY27
+    figure is 9.4% — flagged. Quoting both series' figures for the same quarter beside one series' trend ("2.4% → 9.4%,
+    alongside 9.1% total income growth") is not a cross-series trend. Nothing is substituted: the issue names what each
+    series has."""
+    quoted = {round(float(x), 2) for x in _PCT.findall(point)}
+    if len(quoted) < 2:
         return None
-    for row in _cited_promises(refs, ledger_rows):
-        if row.get("verdict") != "delivered":
-            p = periods.latest_promise(row.get("evidence") or [])
-            when = f" ({p.label} hasn't started)" if p and latest and p.start > latest else ""
-            return (f"Says a promise is met, but the ledger marks '{row.get('subject')}' "
-                    f"{_STATUS.get(row.get('verdict'), row.get('verdict'))}{when}.")
-    for e in evidence:  # a cited guidance item about a period that hasn't started, even with no ledger row
-        if e.get("type") == "guidance" and latest and (p := periods.promise_period(e)) and p.start > latest:
-            return f"Says a promise is met, but the promise is about {p.label}, which hasn't started."
+    by_metric: dict[tuple, list[tuple]] = {}   # metric → [(series, quarter, value, fact)]
+    for f in _figures(evidence):
+        fid = str(f.get("id") or "")
+        p = periods.fact_period(fid, f.get("period")) if "." in fid else None
+        if p:
+            by_metric.setdefault(_metric(fid), []).append((fid.rsplit(".", 1)[0], p.start, round(abs(float(f["value"])), 2), f))
+    source = lambda f: "exchange filing" if f["id"].startswith("X.") else "standardised statements"  # noqa: E731
+    for (metric, kind), facts in sorted(by_metric.items(), key=lambda kv: kv[0]):
+        series = {s for s, *_ in facts}
+        used = list({(s, q, v): (s, q, v, f) for s, q, v, f in facts if v in quoted}.values())
+        spanned = {q for _, q, _, _ in used}
+        if len(series) < 2 or len(spanned) < 2 or any(all(any(s == one and q == p for s, q, _, _ in used) for p in spanned)
+                                                      for one in series):
+            continue
+        shown = " and ".join(f"{v:g}% ({q.label}, {source(f)})" for _, q, v, f in sorted(used, key=lambda u: -u[2]))
+        alt = [f"the {source(f)} {'gives' if f['id'].startswith('X.') else 'give'} {f['value']:g}% for {q.label}"
+               for s, q, v, f in facts if (s, q) not in {(s2, q2) for s2, q2, _, _ in used}
+               and q in {q2 for s2, q2, _, _ in used if s2 != s}]
+        name = f"{metric} growth ({kind.upper()})" if kind else metric
+        return (f"Mixes two {name} series: {shown}. Compare figures from one series"
+                + (f" — {'; '.join(dict.fromkeys(alt))}." if alt else "."))
     return None
 
 
@@ -173,33 +248,33 @@ _CLAUSE_SEP = re.compile(r",\s+|;\s+|\s+[—–]\s+|\s+-\s+")
 
 def trim_unmet_promise_claim(point: str, refs: list[str], evidence: list[dict], ledger_rows: dict[str, dict],
                              latest: periods.FQ | None) -> tuple[str, list[str], list[dict]] | None:
-    """Last resort for a point that, after its rewrite, still says an untested or unmet promise was met: drop the clause
-    that says so ("…, validating sequential margin improvement guidance") when the rest of the sentence stands on its
-    own as a figure-based claim, and drop the references only that clause used (the promise's guidance / ledger row).
+    """Last resort for a point that, after its rewrite, still says a promise was met — or failed — when its ledger
+    verdict says otherwise: drop the clause that says so ("…, validating sequential margin improvement guidance";
+    "…, failing stability targets") when the rest of the sentence stands on its own as a figure-based claim, and drop
+    the references only that clause used (the misjudged promises' ledger rows and guidance).
 
     Returns (point, refs, evidence) — which must pass every narrative check — or None when the claim is the main
     clause and there is nothing sound to keep. The caller re-verifies the trimmed text.
     """
-    if not promise_issue(point, refs, evidence, ledger_rows, latest):
+    found = _offending_claim(point, refs, evidence, ledger_rows, latest)
+    if not found:
         return None
-    m = next((m for m in _CLAIMS_ACHIEVED.finditer(point)
-              if not _NEGATED.search(point[:m.start()]) and not _NEGATION_INSIDE.search(m.group(0))), None)
-    before = [s for s in _CLAUSE_SEP.finditer(point) if s.end() <= m.start()] if m else []
+    m, wrong, _ = found
+    before = [s for s in _CLAUSE_SEP.finditer(point) if s.end() <= m.start()]
     if not before:
         return None
     after = next((s for s in _CLAUSE_SEP.finditer(point) if s.start() >= m.end()), None)
     kept = (point[:before[-1].start()] + (point[after.start():] if after else "")).strip().rstrip(".,;") + "."
     if not re.search(r"\d", kept):
         return None
-    unmet = [r for r in _cited_promises(refs, ledger_rows) if r.get("verdict") != "delivered"]
-    unmet_ids = {g for r in unmet for g in r.get("guidance_ids") or []}
-    drop = {ref for ref in refs if (ref in ledger_rows and ledger_rows[ref] in unmet) or ref in unmet_ids}
+    wrong_ids = {g for r in wrong for g in r.get("guidance_ids") or []}
+    drop = {ref for ref in refs if (ref in ledger_rows and ledger_rows[ref] in wrong) or ref in wrong_ids}
     drop |= {e.get("id") for e in evidence if e.get("type") == "guidance" and latest
              and (p := periods.promise_period(e)) and p.start > latest}
     if len(refs) == len(evidence) and any(r not in drop for r in refs):
         pairs = [(r, e) for r, e in zip(refs, evidence) if r not in drop]
         refs, evidence = [r for r, _ in pairs], [e for _, e in pairs]
-    if comparison_issue(kept, evidence) or promise_issue(kept, refs, evidence, ledger_rows, latest):
+    if comparison_issue(kept, evidence) or series_issue(kept, evidence) or promise_issue(kept, refs, evidence, ledger_rows, latest):
         return None
     return kept, refs, evidence
 
@@ -211,7 +286,7 @@ def thesis_issues(thesis: dict, ledger: dict, latest: periods.FQ | None) -> dict
     for side in ("bull", "bear"):
         for i, p in enumerate(thesis.get(side) or []):
             ev = p.get("evidence") or []
-            issues = [x for x in (comparison_issue(p["point"], ev),
+            issues = [x for x in (comparison_issue(p["point"], ev), series_issue(p["point"], ev),
                                   promise_issue(p["point"], p.get("refs") or [], ev, led, latest)) if x]
             if issues:  # every reason goes to the rewrite, so fixing one doesn't leave the other
                 out[f"{side}{i + 1}"] = {"supported": False, "issue": " ".join(issues)}

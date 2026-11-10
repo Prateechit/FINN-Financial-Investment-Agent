@@ -542,3 +542,136 @@ def test_hdfcbank_and_dixon_prose_still_raise_no_narrative_flags():
     for sym in ("DIXON", "HDFCBANK"):
         m = FIX[sym]
         assert narrative.thesis_issues(m["thesis"], {"rows": m["ledger_rows"]}, periods.from_calendar(m["latest_quarter"])) == {}
+
+
+# ---------- HDFCBANK production memo 2026-11-10 07:34 (built on 3408129) ----------
+# bull 1 pairs the exchange filing's revenue growth (9.1%, Q2 FY27) with the standardised statements' (2.4%, Dec 2025),
+# whose own Q2 FY27 figure is 9.4%. bear 2 says the ROA promise is "failing", but the ledger marks it at_risk.
+
+def _yoy(fid, value, period, label="Revenue growth YoY"):
+    return {"id": fid, "label": label, "value": value, "unit": "%", "period": period}
+
+
+S3_HD = {"type": "signal", "tone": "good", "text": "Revenue growth accelerating: 2.4% YoY (Dec 2025) → 9.4% (Sep 2026).",
+         "facts": ["calc.Q.revenue_yoy.Dec 2025", "calc.Q.revenue_yoy.Sep 2026"],
+         "figures": [_yoy("calc.Q.revenue_yoy.Dec 2025", 2.4, "Dec 2025"), _yoy("calc.Q.revenue_yoy.Sep 2026", 9.4, "Sep 2026")]}
+X_REV_HD = {"type": "fact", **_yoy("X.revenue_yoy.Q2 FY27", 9.1, "Q2 FY27", "Revenue growth YoY (exchange filing)")}
+BULL1_HD = {"point": "Revenue growth accelerated to 9.1% YoY in Q2 FY27, up from 2.4% in Dec 2025.",
+            "refs": ["S3", "X.revenue_yoy.Q2 FY27"], "evidence": [S3_HD, X_REV_HD]}
+ROA_ROW = {"subject": "Return on Assets", "verdict": "at_risk", "downgraded_from": "missed", "guidance_ids": ["G1.5", "G3.2"],
+           "evidence": [{"id": "G1.5", "call": "Q2 FY26", "horizon": "medium to long term"},
+                        {"id": "G3.2", "call": "Q4 FY26", "horizon": "next 1-3 years"}], "facts": [], "delivered": "", "why": ""}
+CAPEX_MISSED = {"subject": "FY26 capex", "verdict": "missed", "guidance_ids": ["G9.1"],
+                "evidence": [{"id": "G9.1", "call": "Q2 FY26", "horizon": "FY26"}], "facts": [], "delivered": "", "why": ""}
+LED_HD = {"L1": ROA_ROW, "L2": CAPEX_MISSED}
+ROA = [{"type": "fact", "id": f"calc.roa.Mar {y}", "label": "Return on average assets", "value": v, "unit": "%", "period": f"FY{y % 100}"}
+       for y, v in ((2026, 1.7), (2024, 2.0))]
+BEAR2_HD = {"point": "ROA declined to 1.7% in FY26 from 2.0% in FY24, failing stability targets.",
+            "refs": ["L1", "calc.roa.Mar 2026", "calc.roa.Mar 2024"],
+            "evidence": [{"type": "ledger", "subject": "Return on Assets", "verdict": "at_risk"}, *ROA]}
+
+
+def test_hdfcbank_bull1_mixed_revenue_series_is_flagged_without_substituting_a_figure():
+    issue = narrative.series_issue(BULL1_HD["point"], BULL1_HD["evidence"])
+    assert issue == ("Mixes two revenue growth (YOY) series: 9.1% (Q2 FY27, exchange filing) and 2.4% (Q3 FY26, "
+                     "standardised statements). Compare figures from one series — the standardised statements give "
+                     "9.4% for Q2 FY27.")
+    th = {"bull": [copy.deepcopy(BULL1_HD)], "bear": []}
+    assert "Mixes two revenue growth" in narrative.thesis_issues(th, {"rows": []}, LATEST)["bull1"]["issue"]
+    assert narrative.trim_unmet_promise_claim(BULL1_HD["point"], BULL1_HD["refs"], BULL1_HD["evidence"], {}, LATEST) is None
+
+
+@pytest.mark.parametrize("point,evidence", [
+    ("Revenue growth accelerated to 9.4% YoY in Sep 2026 from 2.4% in Dec 2025.", [S3_HD, X_REV_HD]),     # one series
+    ("Revenue grew 9.1% YoY in Q2 FY27, per the exchange filing.", [S3_HD, X_REV_HD]),                     # one figure
+    # HDFCBANK 14:47 bull 1: the trend is one series (2.4% → 9.4%); the filing's 9.1% is the same quarter, side by side
+    ("Revenue growth has accelerated from 2.4% YoY in Dec 2025 to 9.4% in Sep 2026, alongside a 9.1% total income "
+     "growth in Q2 FY27.", [S3_HD, X_REV_HD]),
+    ("Revenue growth accelerated to 28.4% YoY in Q2 FY27 from 3.7% in Dec 2025.",                          # TATATECH:
+     [{**S3_HD, "figures": [_yoy("calc.Q.revenue_yoy.Dec 2025", 3.7, "Dec 2025"), _yoy("calc.Q.revenue_yoy.Sep 2026", 28.4, "Sep 2026")]},
+      {**X_REV_HD, "value": 28.4}]),                                                                        # series agree
+    ("Net interest income grew 10.5% YoY, outpacing total income growth of 9.1%.",                         # two metrics
+     [{"type": "fact", **_yoy("X.nii_yoy.Q2 FY27", 10.5, "Q2 FY27", "NII growth YoY (exchange filing)")}, X_REV_HD]),
+    ("PAT fell 5.5% QoQ and grew 3.6% YoY in Q2 FY27.",                                                     # QoQ vs YoY
+     [_fact("calc.Q.pat_qoq.Sep 2026", -5.5, "Sep 2026"), _fact("X.pat_yoy.Q2 FY27", 3.6, "Q2 FY27")]),
+])
+def test_consistent_comparisons_are_not_flagged(point, evidence):
+    assert narrative.series_issue(point, evidence) is None
+
+
+def test_exact_margin_mixed_with_a_filing_margin_is_flagged():
+    ev = [_fact("calc.Q.ebitda_margin.Mar 2026", 16.03, "Mar 2026"), _fact("X.EBITDA margin.Q2 FY26", 15.7, "Q2 FY26")]
+    assert narrative.series_issue("EBITDA margin rose to 16.03% from 15.7%.", ev).startswith("Mixes two ebitda margin series")
+
+
+def test_thesis_gives_a_signal_the_figures_it_is_computed_from(monkeypatch):
+    facts = {f["id"]: f for f in S3_HD["figures"]} | {"X.revenue_yoy.Q2 FY27": {k: v for k, v in X_REV_HD.items() if k != "type"}}
+    fin = {"signals": [{"tone": "neutral", "text": "x", "facts": []}, {"tone": "neutral", "text": "y", "facts": []},
+                       {k: S3_HD[k] for k in ("tone", "text", "facts")}], "facts": facts,
+           "trajectory": {"quarterly": [{"period": "Jun 2026"}, {"period": "Sep 2026"}]}}
+    monkeypatch.setattr(thesis, "chat_json", lambda *a, **k: {"bull": [{"point": BULL1_HD["point"], "refs": BULL1_HD["refs"]}],
+                                                               "bear": [], "watch": None})
+    p = thesis.build(fin, [], {"rows": []})["bull"][0]
+    assert [f["value"] for f in p["evidence"][0]["figures"]] == [2.4, 9.4]
+    assert narrative.series_issue(p["point"], p["evidence"]).startswith("Mixes two revenue growth")
+
+
+def test_hdfcbank_bear2_failure_claim_on_an_at_risk_promise_is_flagged():
+    assert narrative.promise_issue(BEAR2_HD["point"], BEAR2_HD["refs"], BEAR2_HD["evidence"], LED_HD, LATEST) == \
+        "Says a promise failed or was missed, but the ledger marks 'Return on Assets' at risk."
+
+
+def test_hdfcbank_bear2_repair_keeps_the_roa_comparison_and_drops_the_failure_claim():
+    point, refs, evidence = narrative.trim_unmet_promise_claim(BEAR2_HD["point"], BEAR2_HD["refs"], BEAR2_HD["evidence"], LED_HD, LATEST)
+    assert point == "ROA declined to 1.7% in FY26 from 2.0% in FY24."
+    assert refs == ["calc.roa.Mar 2026", "calc.roa.Mar 2024"] and [e["value"] for e in evidence] == [1.7, 2.0]
+    th = {"bull": [], "bear": [{"point": point, "refs": refs, "evidence": evidence}]}
+    assert narrative.thesis_issues(th, {"rows": list(LED_HD.values())}, LATEST) == {}
+
+
+@pytest.mark.parametrize("point", [
+    "Return on Assets is failing its stability targets.",
+    "ROA fell short of the stability target.",
+    "ROA guidance was not achieved.",
+    "The ROA target remains unmet at 1.7%.",
+    "ROA missed management's 1-3 year target.",
+])
+def test_failure_wording_variants_on_an_at_risk_promise_are_flagged(point):
+    assert "failed or was missed" in narrative.promise_issue(point, ["L1"], [], LED_HD, LATEST)
+
+
+@pytest.mark.parametrize("point,refs", [
+    ("FY26 capex of ₹1,058 Cr missed the capex target.", ["L2"]),                    # genuinely missed
+    ("Capex missed the target while ROA declined.", ["L1", "L2"]),                    # the claim is about the missed one
+    ("ROA has not missed its targets yet, at 1.7%.", ["L1"]),                         # negated
+    ("Many targets remain unverifiable due to missing data.", ["L1"]),               # "missing data" is no failure claim
+    ("ROA declined to 1.7% in FY26 from 2.0% in FY24.", ["L1"]),                      # the historical comparison
+])
+def test_legitimate_failure_wording_and_comparisons_pass(point, refs):
+    assert narrative.promise_issue(point, refs, [], LED_HD, LATEST) is None
+
+
+def test_failure_claim_about_an_unstarted_period_is_flagged():
+    g = {"type": "guidance", "id": "G9.9", "call": "Q2 FY27", "horizon": "H2 FY27", "statement": "Margins will improve in H2."}
+    assert "H2 FY27, which hasn't started" in narrative.promise_issue("Margins are failing the H2 target.", ["G9.9"], [g], {}, LATEST)
+
+
+def _run_hd(monkeypatch, thesis_points):
+    def thesis_now():
+        return {"bull": [copy.deepcopy(PLAIN), copy.deepcopy(thesis_points["bull"]), copy.deepcopy(PLAIN)],
+                "bear": [copy.deepcopy(PLAIN), copy.deepcopy(thesis_points["bear"]), copy.deepcopy(PLAIN)], "watch": None}
+    monkeypatch.setattr(research.verify, "check", _all_supported)
+    monkeypatch.setattr(research.thesis, "build", lambda fin, calls, led, feedback=None: thesis_now())  # model repeats it
+    rows = [copy.deepcopy(ROA_ROW), copy.deepcopy(CAPEX_MISSED)]
+    secs = {"thesis": thesis_now(), "ledger": {"rows": rows}}
+    research._verify(FIN, [], secs)
+    return secs
+
+
+def test_pipeline_hdfcbank_bear2_is_repaired_and_bull1_stays_disputed(monkeypatch):
+    secs = _run_hd(monkeypatch, {"bull": BULL1_HD, "bear": BEAR2_HD})
+    b1, b2, v = secs["thesis"]["bull"][1], secs["thesis"]["bear"][1], secs["verification"]
+    assert b2["point"] == "ROA declined to 1.7% in FY26 from 2.0% in FY24." and b2["verified"] is True
+    assert b2["trimmed_from"] == BEAR2_HD["point"]
+    assert b1["point"] == BULL1_HD["point"] and b1["verified"] is False and "Mixes two revenue growth" in b1["issue"]
+    assert v["trimmed"] == ["bear2"] and v["flagged"] == 1

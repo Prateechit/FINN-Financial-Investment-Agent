@@ -79,7 +79,11 @@ def build(fin: dict, calls: list[dict], ledger: dict, feedback: list[str] | None
                                             "found these claims unsupported. Do not repeat them:\n- " + "\n- ".join(feedback))
     out = chat_json("thesis" if not feedback else "thesis_revise", "reason", SYSTEM, prompt, max_tokens=12000)
     valid = set(sig) | set(focus) | set(guid) | set(led) | set(key_facts)
-    lookup = {**{k: {"type": "signal", **v} for k, v in sig.items()}, **{k: {"type": "analyst", **v} for k, v in focus.items()},
+    # A signal carries the figures it is computed from, so the narrative checks can tell which series a quoted value
+    # belongs to ("2.4% → 9.4%" is the standardised-statements revenue series).
+    lookup = {**{k: {"type": "signal", **v, "figures": [fin["facts"][f] for f in v.get("facts", []) if f in fin["facts"]]}
+                 for k, v in sig.items()},
+              **{k: {"type": "analyst", **v} for k, v in focus.items()},
               **{k: {"type": "guidance", **v, **({"ledger_verdict": verdict_of[k]} if k in verdict_of else {})}
                  for k, v in guid.items()},
               **{k: {"type": "ledger", "subject": v["subject"], "verdict": v["verdict"], "promise": v.get("promise"),
