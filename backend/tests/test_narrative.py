@@ -88,6 +88,70 @@ def test_sequential_describing_a_year_apart_pair_is_still_flagged(point):
     assert "is year-on-year" in narrative.comparison_issue(point, YOY_PAIR)
 
 
+# ---------- growth facts that are themselves a comparison (local TATATECH rebuild on 016a6d6, 2026-11-10) ----------
+# bear 3 was correct but flagged: its sequential claim rests on calc.Q.pat_qoq (one figure, already quarter-on-quarter),
+# and the only quarterly pair it cites is the year-apart PAT margin — which it correctly calls year-on-year.
+
+BEAR3 = {"point": "Sequential PAT dropped 5.5% in Sep 2026 (Q2 FY27) versus Jun 2026 (Q1 FY27), with PAT margin declining "
+                  "year-on-year to 10.1% in Q2 FY27 from 12.5% in Q2 FY26.",
+         "refs": ["calc.Q.pat_qoq.Sep 2026", "X.PAT margin.Q2 FY27", "X.PAT margin.Q2 FY26"],
+         "evidence": [_fact("calc.Q.pat_qoq.Sep 2026", -5.5, "Sep 2026", "PAT growth QoQ (sequential)"),
+                      _fact("X.PAT margin.Q2 FY27", 10.1, "Q2 FY27", "PAT margin (exchange filing)"),
+                      _fact("X.PAT margin.Q2 FY26", 12.5, "Q2 FY26", "PAT margin (exchange filing)")]}
+BEAR3_DRAFT = ("PAT margin declined from 12.5% (Q2 FY26) to 10.1% (Q2 FY27), with sequential PAT dropping -5.5% in Sep 2026 "
+               "(Q2 FY27) versus Jun 2026 (Q1 FY27).")
+REV_YOY = _fact("X.revenue_yoy.Q2 FY27", 28.4, "Q2 FY27", "Revenue growth YoY (exchange filing)")
+REV_QOQ = _fact("calc.Q.revenue_qoq.Sep 2026", 2.0, "Sep 2026", "Revenue growth QoQ (sequential)")
+
+
+@pytest.mark.parametrize("point", [BEAR3["point"], BEAR3_DRAFT])
+def test_tatatech_bear3_quarter_on_quarter_fact_is_sequential_evidence(point):
+    assert narrative.comparison_issue(point, BEAR3["evidence"]) is None
+
+
+def test_tatatech_bear3_passes_every_thesis_check_and_bull2_is_still_caught():
+    th = copy.deepcopy(TT["thesis"])
+    th["bear"][2] = copy.deepcopy(BEAR3)
+    issues = narrative.thesis_issues(th, {"rows": TT["ledger_rows"]}, LATEST)
+    assert list(issues) == ["bull2"] and "year-on-year" in issues["bull2"]["issue"]
+
+
+@pytest.mark.parametrize("point,evidence,expected", [
+    # the year-apart PAT margin pair called sequential — a PAT QoQ figure alongside does not excuse it
+    ("PAT margin declined sequentially to 10.1% in Q2 FY27 from 12.5% in Q2 FY26.", BEAR3["evidence"],
+     "Calls a Q2 FY27 vs Q2 FY26 comparison sequential"),
+    ("Sequential PAT margin fell to 10.1%, while PAT dropped 5.5%.", BEAR3["evidence"],
+     "Calls a Q2 FY27 vs Q2 FY26 comparison sequential"),
+    # a QoQ figure for a different metric does not make an EBITDA-margin year-apart pair sequential (bull 2's error)
+    ("EBITDA margin improved sequentially to 16.1% in Q2 FY27.", YOY_PAIR + [BEAR3["evidence"][0]],
+     "Calls a Q2 FY27 vs Q2 FY26 comparison sequential"),
+    # a single YoY figure called sequential, and a single QoQ figure called year-on-year
+    ("Revenue grew 28.4% sequentially in Q2 FY27.", [REV_YOY], "Calls the Q2 FY27 year-on-year revenue change sequential"),
+    ("PAT fell 5.5% year-on-year in Q2 FY27.", [BEAR3["evidence"][0]], "Calls the Q2 FY27 quarter-on-quarter pat change year-on-year"),
+])
+def test_wrong_comparison_words_are_still_flagged(point, evidence, expected):
+    assert narrative.comparison_issue(point, evidence).startswith(expected)
+
+
+@pytest.mark.parametrize("point,evidence", [
+    ("Revenue grew 28.4% year-on-year and 2% sequentially in Q2 FY27.", [REV_YOY, REV_QOQ]),
+    ("Revenue growth accelerated to 28.4% YoY in Sep 2026 (Q2 FY27).", [REV_YOY]),
+    ("EBITDA margin improved sequentially to 16.07% while rising year-on-year to 16.1%.", YOY_PAIR + SEQ_PAIR),
+])
+def test_growth_facts_and_pairs_support_their_own_comparison_words(point, evidence):
+    assert narrative.comparison_issue(point, evidence) is None
+
+
+@pytest.mark.parametrize("fid,expected", [
+    ("calc.Q.pat_qoq.Sep 2026", ("pat", "qoq")), ("calc.Q.revenue_yoy.Mar 2026", ("revenue", "yoy")),
+    ("X.pat_yoy.Q2 FY27", ("pat", "yoy")), ("X.PAT margin.Q2 FY27", ("pat margin", None)),
+    ("X.EBITDA margin.Q2 FY27", ("ebitda margin", None)), ("calc.Q.ebitda_margin.Sep 2026", ("ebitda margin", None)),
+    ("Q.OPM %.Sep 2026", ("ebitda margin", None)), ("Q.Sales.Sep 2026", ("revenue", None)),
+])
+def test_fact_ids_map_to_one_metric_across_sources(fid, expected):
+    assert narrative._metric(fid) == expected
+
+
 def test_year_on_year_naming_a_promise_is_not_flagged():
     point = "Margin edged up to 16.07% in Q2 FY27 from 16.04%, ahead of the year-on-year improvement target."
     assert narrative.comparison_issue(point, SEQ_PAIR) is None
