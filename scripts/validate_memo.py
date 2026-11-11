@@ -83,6 +83,13 @@ def validate(sym: str) -> list[str]:
             problems.append("no sources")
         if not p["grounded"]:
             problems.append("ungrounded number")
+        # re-derived here: every number must be in this point's own cited evidence, not merely somewhere in the memo
+        cited = " ".join(" ".join(str(e.get(k)) for k in ("value", "label", "text", "statement", "target", "quote",
+                                                            "promise", "delivered", "why") if e.get(k) is not None)
+                         + " " + " ".join(f"{f.get('value')} {f.get('label') or ''}" for f in e.get("figures") or [])
+                         for e in p["evidence"])
+        if p["grounded"] and (bad := ungrounded(p["point"], cited)):
+            problems.append(f"number not in its own cited evidence {bad}")
         if LEAK.search(p["point"]):
             problems.append("ref tag/internal id in prose")
         if any(e["type"] == "analyst" for e in p["evidence"]) and "analyst" not in p["point"].lower():

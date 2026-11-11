@@ -123,3 +123,54 @@ def test_extract_all_keeps_other_calls_when_one_fails(monkeypatch):
     monkeypatch.setattr(transcripts, "extract", extract)
     out = transcripts.extract_all([], 2)
     assert [c["call"] for c in out] == ["Q1 FY27", "Q4 FY26"] and out[1]["error"] == "unreadable"
+
+
+# ---------- speaker labels on their own line, or inline ----------
+# HDFCBANK's CFO answers on the label's line ("Srinivasan Vaidyanathan: So first is the LCR question. Yes, we would
+# like to operate between 110 and 120…"). Only own-line labels were recognised, so seven of his answers were credited
+# to the analyst who asked and dropped as "not management" (G5.2, G4.1, G4.6, G3.2, G1.1, G1.2, G1.4, 10 Nov 2026).
+
+CALLTEXT = """
+Moderator:
+The next question is from the line of Ankit Bihani from JM Financial.
+Ankit Bihani:
+And the third is on the PSL front. What are we doing to address the LCR?
+Srinivasan Vaidyanathan: So first is the LCR question. Yes, we would like to operate between 110 and 120, which we
+have told you over the last few years.
+Moderator:
+The next question is from the line of Mr. Kunal Shah from ICICI Securities.
+Kunal Shah: So what range would we want to sustain the LCR at over the next year?
+Srinivasan Vaidyanathan:
+Kunal, in the past, we have mentioned that our endeavor for LCR is to be between 110% and 120%.
+Sashidhar Jagdishan: The answer is: yes, we will keep investing in technology through the next two years.
+Sashidhar Jagdishan:
+Thank you.
+"""
+ANALYSTS = frozenset(transcripts._person(n) for n in transcripts._INTRODUCED.findall(CALLTEXT))
+
+
+@pytest.mark.parametrize("statement,speaker", [
+    ("Yes, we would like to operate between 110 and 120, which we have told you", "Srinivasan Vaidyanathan"),  # inline
+    ("Kunal, in the past, we have mentioned that our endeavor for LCR", "Srinivasan Vaidyanathan"),            # own line
+    ("And the third is on the PSL front. What are we doing", "Ankit Bihani"),                                   # analyst, own line
+    ("So what range would we want to sustain the LCR", "Kunal Shah"),                                           # analyst, inline
+    ("we will keep investing in technology through the next two years", "Sashidhar Jagdishan"),                # "is: yes" is no label
+], ids=["mgmt-inline", "mgmt-own-line", "analyst-own-line", "analyst-inline", "colon-in-sentence"])
+def test_speaker_is_found_for_inline_and_own_line_labels(statement, speaker):
+    assert transcripts.speaker_at(CALLTEXT, statement, ANALYSTS) == speaker
+
+
+def test_a_one_off_heading_is_not_taken_for_a_speaker():
+    text = "\nMANAGEMENT: MR. SASHIDHAR JAGDISHAN – MANAGING DIRECTOR\nWe will grow deposits faster than loans next year.\n"
+    assert transcripts.speaker_at(text, "We will grow deposits faster than loans next year.", frozenset()) is None
+
+
+def test_a_management_answer_after_an_inline_label_is_kept_not_rejected(monkeypatch):
+    doc = {"url": "u", "sha": "s", "n": 1, "pages": [CALLTEXT.strip()]}
+    monkeypatch.setattr(transcripts.docs, "pages", lambda url: doc)
+    monkeypatch.setattr(transcripts, "chat_json", lambda *a, **k: {"guidance": [
+        {"statement": "Yes, we would like to operate between 110 and 120, which we have told you over the last few years.", "page": 1},
+        {"statement": "So what range would we want to sustain the LCR at over the next year?", "page": 1}]})
+    out = transcripts.extract(CALL, 5)
+    assert [(g["id"], g["speaker"]) for g in out["guidance"]] == [("G5.1", "Srinivasan Vaidyanathan")]
+    assert [(r["id"], r["reason"], r["speaker"]) for r in out["rejected"]] == [("G5.2", "not_management", "Kunal Shah")]

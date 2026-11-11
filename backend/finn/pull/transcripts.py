@@ -68,6 +68,20 @@ def pick(concalls: list[dict], n: int = 5) -> list[dict]:
 
 
 _TURN = re.compile(r"\n\s*([A-Z][A-Za-z.'’\- ]{2,60}?)\s*:\s*\n")
+# The same label at the start of a line with the answer running on — "Srinivasan Vaidyanathan: So first is the LCR
+# question." Every word is capitalised, so a sentence that happens to contain a colon ("The answer is: yes") is not one.
+_TURN_INLINE = re.compile(r"\n[ \t]*((?:(?:Mr|Ms|Mrs|Dr)\.?\s+)?[A-Z][A-Za-z.'’\-]*(?:[ \t]+[A-Z][A-Za-z.'’\-]*){0,4})"
+                          r"[ \t]*:[ \t]+(?=\S)")
+
+
+def _turns(full: str) -> list[tuple[int, str]]:
+    """(position, label) of every speaker turn, whether the label sits on its own line or opens the answer's line."""
+    found = {t.start(): t.group(1).strip() for t in _TURN.finditer(full)}
+    for t in _TURN_INLINE.finditer(full):
+        found.setdefault(t.start(), t.group(1).strip())
+    return sorted(found.items())
+
+
 _INTRODUCED = re.compile(r"line of\s+(?:Mr\.?|Ms\.?|Mrs\.?|Dr\.?)?\s*([A-Z][A-Za-z.'’\-]+(?:\s+[A-Z][A-Za-z.'’\-]+){0,3}?)\s+(?:from|with|of)\b")
 
 
@@ -76,7 +90,8 @@ def _person(name: str) -> str:
 
 
 def speaker_at(full: str, statement: str, analysts: frozenset = frozenset()) -> str | None:
-    """The speaker label of the turn in which `statement` occurs ("Atul Lall:" on its own line).
+    """The speaker label of the turn in which `statement` occurs — "Atul Lall:" on its own line, or inline at the start
+    of the answer ("Srinivasan Vaidyanathan: So first is the LCR question…").
 
     Opening remarks often contain section headings in the same "Heading:" shape. Real speakers take several turns;
     a heading appears once — so one-off labels are skipped unless the moderator introduced that person.
@@ -85,11 +100,11 @@ def speaker_at(full: str, statement: str, analysts: frozenset = frozenset()) -> 
     m = re.search(r"\W+".join(map(re.escape, words)), full, re.I) if len(words) >= 3 else None
     if not m:
         return None
+    turns = _turns(full)
     counts: dict = {}
-    for t in _TURN.finditer(full):
-        counts[t.group(1).strip()] = counts.get(t.group(1).strip(), 0) + 1
-    for t in reversed(list(_TURN.finditer(full, 0, m.start()))):
-        name = t.group(1).strip()
+    for _, name in turns:
+        counts[name] = counts.get(name, 0) + 1
+    for _, name in reversed([t for t in turns if t[0] < m.start()]):
         if counts[name] >= 2 or name.lower() == "moderator" or _person(name) in analysts:
             return name
     return None
