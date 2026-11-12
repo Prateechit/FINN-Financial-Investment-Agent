@@ -12,6 +12,16 @@ FINN is a mobile-first investing assistant for Indian equities. It does two jobs
 
 > The API runs on Render's free plan, so the first request after a period of inactivity can be slow while the instance wakes up.
 
+### For evaluators
+
+| | |
+|---|---|
+| **Built for** | ENAM Holdings AI Engineer Build Challenge |
+| **Where to start** | Open the live app → **Brief** (tap a story's score to see why it ranked) → **Research** → open a memo and tap a Promise Ledger row to see the verbatim quote and the reported figure behind its verdict. The [screenshots](#screenshots) follow the same path. |
+| **What to look for** | Every figure, quote and fiscal period in model-written text is checked in code; anything the checks cannot confirm is shown as *Can't verify* or *disputed*, not hidden ([Evidence and verification layers](#evidence-and-verification-layers)). |
+| **Quality** | 347 backend tests; read-only audit and memo-validation scripts ([Testing](#testing-and-quality-tooling)). Known gaps are listed under [Limitations](#limitations). |
+| **How it was built** | With Claude Code (Claude Opus 5.5). From PR #1 onwards every change went through a pull request reviewed and merged by the author; earlier pushes to `main` were made at the author's instruction. See [`FINN_AI_BUILD_HISTORY.md`](FINN_AI_BUILD_HISTORY.md) and the decision log [`docs/DECISIONS.md`](docs/DECISIONS.md). |
+
 <p>
 <img src="docs/screens/brief.png" width="240" alt="Brief">
 <img src="docs/screens/memo_DIXON.png" width="240" alt="Research memo — Promise Ledger">
@@ -66,7 +76,7 @@ FINN treats the day as **triage** — an inbox you can clear, not a dashboard �
 |---|---|
 | **Any NSE company** | Search by company name or ticker; names are resolved against the NSE equity list before any research starts, and unmatched names never create a memo (`sources/symbols.py`). |
 | **Deterministic sections** | Business snapshot, multi-year trajectory, balance sheet, cash quality and computed signals come from standardised statements with no LLM. Every number is registered in a **fact table** with a stable id (e.g. `calc.Q.ebitda_margin.Mar 2026`) that later stages cite (`pull/financials.py`). |
-| **Quote-verified guidance** | The last five earnings-call transcripts are read in one long-context pass each. Every guidance quote is matched **verbatim** against the transcript, with its page recorded, and the speaker turn is located so moderator and analyst speech is not treated as management guidance (`pull/transcripts.py`). |
+| **Quote-verified guidance** | The last five earnings-call transcripts are read in one long-context pass each. Every guidance quote is matched **verbatim** against the transcript, with its page recorded — a quote may run across a page break, with the transcript's running header ignored. The speaker turn is located (labels on their own line or at the start of an answer) so moderator and analyst speech is not treated as management guidance. Rejected quotes are kept in the memo record with the reason (`pull/transcripts.py`, `sources/docs.py`). |
 | **Promise Ledger** | Guidance across calls is grouped into promises and judged against the fact table: *delivered, missed, on track, at risk, goalposts moved, quietly dropped, too early,* or *can't verify* (`pull/ledger.py`). Each row shows the quotes (speaker, call, transcript page link) and the reported figures it rests on. |
 | **Bull vs bear** | Three bull points, three bear points and one "watch" item, written only from computed signals, ledger rows, verified guidance and analyst questions — each point lists its sources (`pull/thesis.py`). |
 | **Progressive build** | State is persisted after each stage, so the memo renders while it builds. Usage (model calls, tokens, cache hits) is recorded per memo. |
@@ -78,13 +88,13 @@ Every model-written section passes through checks in code. None of these trust t
 
 | Risk | What FINN does |
 |---|---|
-| Invented numbers | Any number in model-written prose must exist in the evidence the model was given (`grounding.py`). |
+| Invented numbers | Any number in model-written prose must exist in the evidence the model was given (`grounding.py`). A bull/bear point must go further: every number it quotes must be in **its own cited evidence** — a figure that appears elsewhere in the memo does not count (`pull/thesis.py`, `pull/narrative.py`). |
 | Paraphrased or misattributed quotes | Verbatim matching against transcript text, page numbers recorded, analyst/moderator turns excluded. On build day this removed 10 of 38 HDFC Bank "guidance" quotes that were analysts' words. |
 | Wrong fiscal period | One module owns the Indian fiscal calendar (`pull/periods.py`): FY26 = Apr 2025 – Mar 2026, a bare "Q4" on a call resolves from the call's own quarter. A promise is judged only on figures from its own period; a quarter or half-year that hasn't started is *too early*. |
 | Rounded comparisons | Quarterly margin comparisons use exact margins (operating profit ÷ sales), never rounded OPM %. When a promise names its base quarter ("exceed our Q2 run-rate"), that quarter's exact figure is attached; if it is unavailable, the row is *can't verify*. |
 | Over-confident verdicts | A verdict needs a reported figure or a later management statement; "missed" needs the deadline to have passed; numeric targets are range-checked in code; a row's title must name the promise's own period. Overridden verdicts are shown ("model said …; corrected by FINN's evidence check"). |
-| Inconsistent prose | Deterministic narrative checks (`pull/narrative.py`): sequential vs year-on-year wording must match the cited figures; a trend must use one data series (exchange filing vs standardised statements); a figure must carry its own period label; a promise can be called met only if *delivered*, or failed only if *missed*; the credibility summary must agree with the final verdicts. |
-| Claims the evidence doesn't support | A second model checks every bull/bear point and ledger verdict against **only its cited evidence** (`pull/verify.py`). Unsupported points get one rewrite; a point still flagged then gets a deterministic repair (wrong period label, mixed series, unsupported promise clause) and is re-verified. Anything still unsupported stays in the memo marked **"⚠ disputed by FINN's check"** — never silently marked verified. |
+| Inconsistent prose | Deterministic narrative checks (`pull/narrative.py`): sequential vs year-on-year wording must match the cited figures; a trend must use one data series (exchange filing vs standardised statements); a figure must carry its own period label; "outpacing" / "lagging" must agree with the figures compared, between like-for-like rates; a promise can be called met only if *delivered*, or failed only if *missed*; the credibility summary must agree with the final verdicts. |
+| Claims the evidence doesn't support | A second model checks every bull/bear point and ledger verdict against **only its cited evidence** (`pull/verify.py`). Unsupported points get one rewrite; a point still flagged then gets a deterministic repair (wrong period label, mixed series, unsupported promise clause, contradictory comparison, uncited figure — clauses are dropped, never reworded, and no figure is substituted) and is re-verified. Anything still unsupported stays in the memo marked **"⚠ disputed by FINN's check"** — never silently marked verified. |
 
 ## Architecture
 
@@ -173,6 +183,7 @@ frontend/src/
 scripts/              audit_periods · validate_memo · smoke_test · eval_results · screens · migrate_sqlite_to_neon
 spikes/               day-1 data-availability checks, kept as evidence
 docs/                 DECISIONS.md (data findings and decision log) · screens/ · ai-history/ (build transcript)
+FINN_AI_BUILD_HISTORY.md   how FINN was built: phases, PRs, tests, AI tool use and human approvals
 render.yaml           Render service definition      .github/workflows/ingest.yml  scheduled push pipeline
 ```
 
@@ -249,7 +260,7 @@ npm run dev                            # http://localhost:5173
 ```bash
 cd backend
 pip install pytest                     # test dependency; not in requirements.txt
-python -m pytest -q                    # 299 tests
+python -m pytest -q                    # 347 tests
 
 cd ../frontend
 npm run lint                           # oxlint
@@ -287,10 +298,10 @@ Both services are deployed from the `main` branch.
 
 ## Testing and quality tooling
 
-- **299 backend tests** (`backend/tests/`): the fiscal calendar and promise-period resolution, ledger guards, exact-margin comparisons, narrative checks and repairs, the verification pipeline (including the verifier being unavailable), stale-memo refresh safety (fresh, stale, repeated, concurrent, failed), and company-name resolution. Many cases replay real rows from production memos (`ledger_rows_fixture.json`, `narrative_fixture.json`) and real market-wide filings (`nse_2w.json`).
+- **347 backend tests** (`backend/tests/`): the fiscal calendar and promise-period resolution, ledger guards, exact-margin comparisons, narrative checks and repairs (including comparison direction and cited-figure grounding), the verification pipeline (including the verifier being unavailable), stale-memo refresh safety (fresh, stale, repeated, concurrent, failed), company-name resolution, and transcript handling (quotes across page breaks, speaker attribution, malformed model output). Many cases replay real rows from production memos (`ledger_rows_fixture.json`, `narrative_fixture.json`) and real market-wide filings (`nse_2w.json`).
 - **`scripts/audit_periods.py`** — read-only audit of memos through the API: flags ledger rows judged on figures from the wrong fiscal period, or margin comparisons decided on rounded OPM %.
-- **`scripts/validate_memo.py`** — independently re-checks a stored memo: every quote verbatim on its cited page, ledger ids and numbers grounded in their own evidence, thesis structure and references.
-- **`scripts/smoke_test.py`** — calls every API endpoint the frontend uses, through the Vite dev server's proxy, and exits non-zero on any failure.
+- **`scripts/validate_memo.py`** — independently re-checks a stored memo: every quote verbatim on its cited page, ledger ids and numbers grounded in their own evidence, every thesis number in that point's own cited evidence, thesis structure and references.
+- **`scripts/smoke_test.py`** — calls every API endpoint the frontend uses, through the Vite dev server's proxy, and exits non-zero on any failure. It also exercises the `PUT` and `POST` routes (it changes and restores settings and starts memo builds), so run it against a local instance.
 - **`scripts/eval_results.py`** — results engine across the portfolio (arithmetic and cross-source checks).
 - **`scripts/screens.py`** — phone-sized screenshots of the running app with Playwright.
 - **`docs/DECISIONS.md`** — data findings and decisions, with the measurements quoted in this README.
@@ -367,7 +378,7 @@ An evaluator's path through the app, from the daily Brief to the evidence behind
 </tr>
 <tr>
 <td valign="top"><sub><b>Company page.</b> Price history with critical and notable filings marked, and the latest results card.</sub></td>
-<td valign="top"><sub><b>Refusing to use a proxy.</b> In a bank's memo, promises about metrics the sources don't report — such as net interest margin — are marked <i>Can't verify</i> rather than judged on a different figure.</sub></td>
+<td valign="top"><sub><b>Refusing to use a proxy.</b> In a bank's memo, promises about metrics the sources don't report — such as net interest margin — are marked <i>Can't verify</i> rather than judged on a different figure. (From an HDFC Bank build on 9 November 2026; the memo has since been rebuilt, so the live wording and rows differ.)</sub></td>
 </tr>
 </table>
 
@@ -376,17 +387,17 @@ An evaluator's path through the app, from the daily Brief to the evidence behind
 - **Unofficial data access.** NSE endpoints sit behind bot protection and screener.in is read from its public pages; either can change format or rate-limit without notice.
 - **Free-tier models and hosting.** When FINN was built, Gemini's free tier allowed about 20 requests a day per model and Groq's about 8k tokens a minute (noted in `finn/llm.py`), so a memo build can fall back to weaker models. The free Render instance sleeps when idle.
 - **Model output varies between builds.** The checks guarantee consistency, not wording. A point that cannot be repaired deterministically stays in the memo marked *disputed* rather than being removed, and the second-model verifier can occasionally reject a correct ledger verdict.
-- **Pattern-based narrative checks.** Series and period-label checks cover percentage figures, and a period label is recognised when it follows the figure ("1.7% in FY26"), not when it precedes it.
-- **Scheduled ingest is not confirmed to be running.** GitHub records a single run of the ingest workflow (9 November 2026, 23:50 UTC), and the latest filing reported by the production API is from 9 November, so the Brief may show stale filings. The cause has not yet been diagnosed.
+- **Pattern-based narrative checks.** Series and period-label checks cover percentage figures, and a period label is recognised when it follows the figure ("1.7% in FY26"), not when it precedes it. The comparison check covers explicit words ("outpacing", "lagging") between two percentages, not looser wording ("well above").
+- **Scheduled ingest runs irregularly.** With its repository secrets set, the workflow writes to production — a manual run on 10 November raised the filing count from 170 to 173 — but GitHub runs scheduled workflows on a best-effort basis: between 9 and 11 November it started 7 scheduled runs against roughly 55 cron slots, most of them hours late. Filings in the Brief can therefore lag. If the `DATABASE_URL` secret were missing, the job would still succeed but write to a throwaway SQLite database.
 - **One mock portfolio, no accounts.** Alert settings are shared server-side; per-viewer state (window, cleared stories) lives on the device.
 - **Viewing can trigger a rebuild.** Opening a memo older than 24 hours refreshes it automatically (one build at a time, failures don't replace the existing memo), which consumes model quota.
 - **Testing gaps.** There are no frontend unit or browser tests (the frontend is checked by type-checking and lint), and Vercel preview deployments are not wired to the API.
 
 ## Future improvements
 
-- Diagnose why the scheduled ingest has not been running, add run monitoring, and show the last-ingest time in the app.
+- Make scheduled ingest dependable: an external scheduler or off-peak cron minutes, fail the job when `DATABASE_URL` is missing instead of falling back to SQLite, and show the last-ingest time in the app.
 - Report the deployed commit in `/api/health`, and show `refresh_failed` / disputed counts in the memo header.
-- Extend narrative checks beyond percentages (₹ amounts, ratios) and to labels that precede a figure.
+- Extend the series and period-label checks beyond percentages (₹ amounts, ratios) and to labels that precede a figure.
 - Stabilise the ledger-verdict prompt for the second-model verifier.
 - Add frontend component tests and wire preview deployments to a staging API.
 - Accounts and multiple portfolios, with per-user alert settings.
@@ -399,4 +410,8 @@ An evaluator's path through the app, from the daily Brief to the evidence behind
 
 ## How this was built
 
-FINN was built with an AI coding assistant. The decision log is in [`docs/DECISIONS.md`](docs/DECISIONS.md), and the build transcript is exported to [`docs/ai-history/`](docs/ai-history/) with environment values redacted by `scripts/export_history.py`.
+FINN was built with **Claude Code**, Anthropic's coding agent, running Claude Opus 5.5. The assistant wrote the code, tests and documentation; the author set the requirements and constraints, set up the hosting accounts and secrets, approved every production action (pushes to `main`, memo rebuilds) and reviewed and merged every pull request.
+
+- [`FINN_AI_BUILD_HISTORY.md`](FINN_AI_BUILD_HISTORY.md) — the build history: phases, commits and PRs, test counts at each milestone, and who did what.
+- [`docs/DECISIONS.md`](docs/DECISIONS.md) — data findings and design decisions, with measurements.
+- [`docs/ai-history/`](docs/ai-history/) — the build session transcript, exported with environment values redacted by `scripts/export_history.py`. The export covers the session up to 9 November 2026, 15:37 UTC; later work is recorded in the pull requests and the build history.
