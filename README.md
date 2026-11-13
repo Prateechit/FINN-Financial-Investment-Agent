@@ -328,11 +328,11 @@ An evaluator's path through the app, from the daily Brief to the evidence behind
 <table>
 <tr>
 <td width="50%" valign="top"><img src="docs/screens/alerts_mobile.png" width="400" alt="Alerts"></td>
-<td valign="top"><img src="docs/screens/research_search_tatatech.png" width="400" alt="Research search"></td>
+<td valign="top"><img src="docs/screens/research_tata_suggestion.png" width="400" alt="Research search suggestions"><br><br><img src="docs/screens/research_search_tatatech.png" width="400" alt="Research search"></td>
 </tr>
 <tr>
-<td valign="top"><sub><b>Alerts.</b> Your own thresholds (±4% daily move, 2× 20-day volume, filing score ≥ 70). Each price or volume alert names the filing that most likely explains it (“Likely why”).</sub></td>
-<td valign="top"><sub><b>Research search.</b> Typing a company name — “tata technologies” — resolves it to its NSE ticker, TATATECH, before any research starts.</sub></td>
+<td valign="top"><sub><b>Alerts.</b> Your own thresholds (±4% daily move, 2× 20-day volume, filing score ≥ 70), filtered by alert type and window — here a week of filing alerts from 12–13 November. Price and volume alerts name the filing that most likely explains them (“Likely why”).</sub></td>
+<td valign="top"><sub><b>Research search.</b> Typing “tata te” suggests matching NSE companies — TATATECH and TTML — and a full name such as “tata technologies” resolves to its ticker, TATATECH, before any research starts.</sub></td>
 </tr>
 </table>
 
