@@ -21,7 +21,7 @@ Commit times are IST (UTC+5:30), as Git records them. Production and server even
 
 | Tool | Role | Evidence |
 |---|---|---|
-| **Claude Code**, Anthropic's coding agent, run in the VS Code extension | Wrote the code, tests, scripts and documentation; ran tests, audits and read-only production checks; prepared commits and branches | Session `c363bd54-6dbf-4695-9f84-97a9ce39aca0`, exported to `docs/ai-history/` by `scripts/export_history.py`. All **23 of 23** authored commits carry `Co-Authored-By: Claude Opus 5.5`. PRs #10–#12 end with "Generated with Claude Code". |
+| **Claude Code**, Anthropic's coding agent, run in the VS Code extension | Wrote the code, tests, scripts and documentation; ran tests, audits and read-only production checks; prepared commits and branches | Session `c363bd54-6dbf-4695-9f84-97a9ce39aca0`, exported in redacted form to `docs/ai-history/` by `scripts/export_history_redacted.py`. All **23 of 23** authored commits carry `Co-Authored-By: Claude Opus 5.5`. PRs #10–#12 end with "Generated with Claude Code". |
 | **Claude Opus 5.5** (`claude-opus-5-5`) | The model behind every assistant turn in the session | The session transcript records `claude-opus-5-5` on all 2,551 assistant messages. |
 
 **No other AI coding tool** (for example Copilot, Cursor, ChatGPT or Codex) is named anywhere in the repository or the session record, so none is claimed here.
@@ -193,7 +193,7 @@ Counts come from `pytest --collect-only` run on each listed commit's tree (`git 
 - **The HDFCBANK memo in production** is still the 19:34 UTC build from 10 Nov: bull 2 is disputed, and 7 management quotes are rejected. The PR #12 fixes reach it only after deployment and one approved rebuild; neither has been checked since the merge.
 - **The README's HDFCBANK screenshot** comes from a 9 Nov build; its caption now says so. A replacement waits for an approved rebuild with the PR #12 code. (The README's test count, ingestion limitation and build section, and a FINN-specific `frontend/README.md`, were updated in a documentation pass on 12 Nov.)
 - **Housekeeping:** a stray, unreferenced `docs/screens$1.png` (a full-length Portfolio screenshot), and 9 other screenshots in `docs/screens/` that the README does not use.
-- **The AI-history export** in `docs/ai-history/` covers the session only up to 9 Nov 15:37 UTC, with the export committed in `9932c08`. The later work in this document comes from the same session's local transcript, which has not yet been re-exported. Running `scripts/export_history.py` again would publish it, with secrets redacted.
+- **The AI-history export** in `docs/ai-history/` now covers the whole session up to this document, in two redacted Markdown files with no gap or overlap: 9 Nov 12:07 → 15:37 UTC (966 conversation records) and 9 Nov 15:38 → 12 Nov 21:19 UTC (1,832). Each has a `.redaction-report.json`. They contain prompts, replies, tool calls and truncated tool results. They do **not** contain the model's private reasoning, harness metadata, images, or the output of commands that touched a `.env` file. Credentials, account identifiers, email addresses, local paths and usernames are redacted by `scripts/export_history_redacted.py`, and an independent leak review of both files found nothing. The first, partial export (committed in `9932c08`) was removed from the repository tree when these replaced it; it remains in the Git history of earlier commits.
 - **The decision log** (`docs/DECISIONS.md`) ends on 9 Nov. Later decisions are recorded in the PR descriptions and commit messages.
 
 ---
