@@ -1,0 +1,60 @@
+{
+ "session": "c363bd54-6dbf-4695-9f84-97a9ce39aca0",
+ "window_utc": {
+  "after": "0",
+  "before": "2026-11-09T15:37:50.846Z"
+ },
+ "coverage_utc": {
+  "first": "2026-11-09T12:07:57.363Z",
+  "last": "2026-11-09T15:37:50.845Z"
+ },
+ "counts": {
+  "skipped (harness / outside window)": 9238,
+  "user prompts": 16,
+  "conversation records": 966,
+  "private reasoning blocks not exported": 379,
+  "tool calls": 432,
+  "tool results": 431,
+  "assistant messages": 91
+ },
+ "redactions": {
+  ".env value (literal)": 1,
+  ".env value fragment": 25,
+  "GitHub token": 0,
+  "Google API key": 0,
+  "Groq key": 0,
+  "JWT": 0,
+  "Neon credential": 1,
+  "Neon endpoint/project id": 0,
+  "Neon hostname": 1,
+  "OpenAI-style key": 0,
+  "PostgreSQL URL": 3,
+  "Render service/owner id": 0,
+  "Render token": 0,
+  "Vercel preview host": 0,
+  "Vercel token/id": 0,
+  "Windows username": 30,
+  "bearer token": 0,
+  "binary/base64 payload": 0,
+  "email address": 6,
+  "embedded image removed": 14,
+  "local home path": 463,
+  "public IPv4 address": 1,
+  "secret assignment": 0
+ },
+ "normalisation": {
+  "\"=======\" rule lines dropped": 1,
+  "CRLF line endings converted": 1389,
+  "lines with trailing spaces/tabs trimmed": 332,
+  "lone carriage returns converted to line breaks": 0
+ },
+ "output": "docs/ai-history/c363bd54-6dbf-4695-9f84-97a9ce39aca0.start-to-2026-11-09.redacted.md",
+ "excluded": [
+  "raw session records",
+  "harness attachments (environment, account, file snapshots)",
+  "<system-reminder> and IDE-selection blocks",
+  "model private reasoning (thinking)",
+  "results of tool calls that touched .env files",
+  "embedded images and base64 payloads"
+ ]
+}

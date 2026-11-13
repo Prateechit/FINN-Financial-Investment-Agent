@@ -180,9 +180,9 @@ backend/
 frontend/src/
   screens/            Brief · Alerts · Research · Memo · Portfolio · SettingsSheet
   components/         Story · Charts · ui          lib/  api · hooks · format
-scripts/              audit_periods · validate_memo · smoke_test · eval_results · screens · migrate_sqlite_to_neon
+scripts/              audit_periods · validate_memo · smoke_test · eval_results · screens · migrate_sqlite_to_neon · export_history_redacted
 spikes/               day-1 data-availability checks, kept as evidence
-docs/                 DECISIONS.md (data findings and decision log) · screens/ · ai-history/ (build transcript)
+docs/                 DECISIONS.md (data findings and decision log) · screens/ · ai-history/ (redacted build-session transcript)
 FINN_AI_BUILD_HISTORY.md   how FINN was built: phases, PRs, tests, AI tool use and human approvals
 render.yaml           Render service definition      .github/workflows/ingest.yml  scheduled push pipeline
 ```
@@ -414,4 +414,8 @@ FINN was built with **Claude Code**, Anthropic's coding agent, running Claude Op
 
 - [`FINN_AI_BUILD_HISTORY.md`](FINN_AI_BUILD_HISTORY.md) — the build history: phases, commits and PRs, test counts at each milestone, and who did what.
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — data findings and design decisions, with measurements.
-- [`docs/ai-history/`](docs/ai-history/) — the build session transcript, exported with environment values redacted by `scripts/export_history.py`. The export covers the session up to 9 November 2026, 15:37 UTC; later work is recorded in the pull requests and the build history.
+- [`docs/ai-history/`](docs/ai-history/) — the Claude Code build session, in two redacted Markdown files that together cover it without gaps from 9 November 2026, 12:07 UTC, to 12 November 2026, 21:19 UTC:
+  - [`….start-to-2026-11-09.redacted.md`](docs/ai-history/c363bd54-6dbf-4695-9f84-97a9ce39aca0.start-to-2026-11-09.redacted.md) — 9 Nov 12:07 → 15:37 UTC (966 conversation records);
+  - [`….continuation-2026-11-09-to-2026-11-12.redacted.md`](docs/ai-history/c363bd54-6dbf-4695-9f84-97a9ce39aca0.continuation-2026-11-09-to-2026-11-12.redacted.md) — 9 Nov 15:38 → 12 Nov 21:19 UTC (1,832 conversation records).
+
+  Each contains the prompts, the assistant's replies, its tool calls (commands and code changes) and truncated tool results, and has a `.redaction-report.json` alongside listing what was redacted. They were rendered by [`scripts/export_history_redacted.py`](scripts/export_history_redacted.py), which redacts credentials, account identifiers, email addresses, local paths and usernames, and drops images and binary data. Not included: the model's private reasoning, harness metadata, and the output of commands that touched a `.env` file.
